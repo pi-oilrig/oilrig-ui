@@ -29,7 +29,7 @@ writeFileSync(join(TUI, "word-navigation", "index.js"), `export const findWordBa
 writeFileSync(join(TUI, "word-navigation.js"), `export const findWordBackward = () => 0; export const findWordForward = () => 0;`);
 writeFileSync(join(TUI, "index.js"), `
 export const visibleWidth = (s) => String(s).replace(/\\x1b\\[[0-9;]*m/g, "").length;
-export const truncateToWidth = (s, w) => String(s).slice(0, w);
+export const truncateToWidth = (s, w) => { const vis = String(s).replace(/\x1b\[[0-9;]*m/g, ""); return vis.length <= w ? String(s) : String(s).slice(0, w); };
 export const CURSOR_MARKER = "\\x1b[7m";
 export const fuzzyFilter = (q, items, fn) => items.filter(i => fn(i).toLowerCase().includes(q.toLowerCase()));
 export const matchesKey = (data, key) => data === key;
@@ -199,6 +199,29 @@ const bareCtx = {
 await fire(stylePi, "session_start", {}, bareCtx);
 await fire(stylePi, "agent_settled", {}, bareCtx);
 check("starship renders a line with no tokens/branch", Array.isArray(bareWidget) && bareWidget.join("").trim().length > 0);
+
+// Full telemetry: drive a streamed message + turn, assert TPS/TTFT/tokens/turns.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let teleWidget = null;
+const teleCtx = {
+	mode: "tui",
+	projectRoot: "/tmp",
+	sessionManager: { getBranch: () => [] },
+	ui: { ...starCtx.ui, setWidget: (k, l) => { teleWidget = l; } },
+};
+await fire(stylePi, "session_start", {}, teleCtx);
+await fire(stylePi, "message_start", {}, teleCtx);
+await sleep(30);
+await fire(stylePi, "message_update", {}, teleCtx); // first token
+await sleep(70);
+await fire(stylePi, "message_update", {}, teleCtx);
+await fire(stylePi, "message_end", { message: { role: "assistant", usage: { input: 1000, output: 500 } } }, teleCtx);
+await fire(stylePi, "turn_end", {}, teleCtx);
+const teleLine = (teleWidget ?? []).join(" ");
+check("starship telemetry: TPS + tok/s", /TPS/.test(teleLine) && /tok\/s/.test(teleLine));
+check("starship telemetry: TTFT", /TTFT/.test(teleLine));
+check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
+check("starship telemetry: pipe-separated", teleLine.includes(" | "));
 
 for (const line of results) console.log(line);
 const failed = results.filter((x) => x.startsWith("FAIL"));

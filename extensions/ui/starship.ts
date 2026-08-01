@@ -1,134 +1,164 @@
-// Starship — single-line status widget below the editor.
-// Segments: tokens (↑in ↓out), kern ops, frontier cursor, git branch,
-// session duration, cost. Model is intentionally omitted — pi renders it
-// on the native line above the input, so repeating it here is noise.
-// Renders via ctx.ui.setWidget with placement "belowEditor".
+// Starship — single-line telemetry widget below the editor.
+//
+// Format (nerd-font icons, " | " separated):
+//   󰓅 TPS 71.7 tok/s |  TTFT 6.7s |  3m 26s |  14 |  12k |  stall 27x / 1m 51s
+//
+// TPS  — output tok/s of the last assistant message (out tokens / gen time).
+// TTFT — time to first token of the last message (message_start → first update).
+// dur  — session wall-clock (always present; the anchor).
+// turns— completed agent turns this session.
+// tok  — total session tokens (input + output).
+// stall— count + total time of streaming gaps over STALL_MS.
+//
+// All timing is derived from message_start/update/end + turn_end events.
+// Renders via ctx.ui.setWidget placement "belowEditor" on settle/turn/clock.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { execSync } from "node:child_process";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { BLUE, CYAN, DIM, GREEN, MAGENTA, RESET, YELLOW } from "./colors.ts";
+import { BLUE, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW } from "./colors.ts";
 
 const WIDGET_KEY = "starship";
 
-// ── frontier cursor (minimal parser, no cross-package dep) ─────────────────
+// Streaming gap longer than this counts as a stall.
+const STALL_MS = 2000;
 
-type Ticket = { id: string; state: string; mode: string; blockedBy: string[]; title: string };
-type Cursor = { done: number; total: number; ready: string[]; waiting: string[] };
-
-function parseTicket(id: string, text: string): Ticket {
-	const m = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-	if (!m) return { id, state: "open", mode: "afk", blockedBy: [], title: id };
-	const fields: Record<string, string> = {};
-	for (const line of m[1].split("\n")) {
-		const kv = line.match(/^([\w-]+):\s*(.*?)\s*$/);
-		if (kv) fields[kv[1]] = kv[2].trim();
-	}
-	const body = (m[2] ?? "").trim();
-	const title = body.split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").trim() ?? id;
-	return { id, state: fields["state"] ?? "open", mode: fields["mode"] ?? "afk", blockedBy: fields["blocked-by"] ? fields["blocked-by"].split(/\s+/).filter(Boolean) : [], title };
-}
-
-function frontierCursor(dir: string): Cursor | null {
-	const tdir = join(dir, "tickets");
-	if (!existsSync(tdir)) return null;
-	const tickets: Ticket[] = [];
-	const files = readdirSync(tdir).filter((f: string) => f.endsWith(".md")).sort();
-	for (const f of files) {
-		const p = join(tdir, f);
-		tickets.push(parseTicket(f.replace(/\.md$/, ""), readFileSync(p, "utf8")));
-	}
-	if (tickets.length === 0) return null;
-	const closed = (t: Ticket) => t.state === "done" || t.state === "out-of-scope";
-	const counted = tickets.filter((t) => t.state !== "out-of-scope");
-	const front = tickets.filter((t) => (t.state === "open" && !t.blockedBy.length) || t.blockedBy.every((b) => { const bt = tickets.find((t2) => t2.id === b); return bt ? closed(bt) : true; }));
-	return { done: counted.filter((t) => t.state === "done").length, total: counted.length, ready: front.map((t) => t.id), waiting: front.filter((t) => t.mode === "hitl").map((t) => t.id) };
-}
+// Nerd-font glyphs, one per segment. Swap these to taste — the layout is
+// icon-agnostic. Only the speedometer is confirmed; the rest are sensible
+// nerd-font defaults.
+const ICONS = {
+	tps: "\u{F04C5}", // 󰓅 md-speedometer
+	ttft: "\u{F051F}", // 󰔟 md-timer-sand
+	dur: "\u{F0150}", // 󰅐 md-clock-outline
+	turns: "\u{F04AD}", // 󰒭 md-message-reply
+	tok: "\u{F0BC5}", // 󰯅 md-pound / hash
+	stall: "\u{F0026}", // 󰀦 md-alert
+};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-function fmt(n: number): string { return n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`; }
-
-function gitBranch(root: string): string {
-	try { return execSync("git rev-parse --abbrev-ref HEAD", { cwd: root, encoding: "utf8", timeout: 2000 }).trim(); } catch { return ""; }
+function fmt(n: number): string {
+	return n < 1000 ? `${n}` : `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
 }
 
-function sessionDuration(start: number): string {
-	const sec = Math.floor((Date.now() - start) / 1000);
+// Seconds → "45s" / "3m 26s" / "1h 12m".
+function hms(totalSec: number): string {
+	const sec = Math.floor(totalSec);
 	if (sec < 60) return `${sec}s`;
 	const min = Math.floor(sec / 60);
-	if (min < 60) return `${min}m`;
-	return `${Math.floor(min / 60)}h${min % 60}m`;
+	if (min < 60) return `${min}m ${sec % 60}s`;
+	const hr = Math.floor(min / 60);
+	return `${hr}h ${min % 60}m`;
 }
 
 // ── extension entry ────────────────────────────────────────────────────────
 
 export function installStarship(pi: ExtensionAPI): void {
-	let root = process.cwd();
 	let sessionStart = Date.now();
-	let kernCount = 0;
 	let lastFrame = "";
 	let timer: ReturnType<typeof setInterval> | undefined;
 
-	pi.on("tool_call", (event: any) => {
-		if (event?.toolName?.startsWith("kern_")) kernCount++;
-	});
+	// session totals
+	let turns = 0;
+	let totalIn = 0;
+	let totalOut = 0;
+	let stallCount = 0;
+	let stallMs = 0;
+
+	// per-message streaming timing
+	let msgStart = 0;
+	let firstTokenAt = 0;
+	let lastUpdateAt = 0;
+	let lastTps = 0;
+	let lastTtft = 0;
+
+	function reset(): void {
+		sessionStart = Date.now();
+		lastFrame = "";
+		turns = 0;
+		totalIn = 0;
+		totalOut = 0;
+		stallCount = 0;
+		stallMs = 0;
+		msgStart = 0;
+		firstTokenAt = 0;
+		lastUpdateAt = 0;
+		lastTps = 0;
+		lastTtft = 0;
+	}
 
 	pi.on("session_start", (_event: any, ctx: any) => {
-		root = ctx.projectRoot ?? root;
-		sessionStart = Date.now();
-		kernCount = 0;
-		lastFrame = "";
+		reset();
+		startClock(ctx);
+	});
+
+	pi.on("message_start", () => {
+		msgStart = Date.now();
+		firstTokenAt = 0;
+		lastUpdateAt = msgStart;
+	});
+
+	pi.on("message_update", () => {
+		const now = Date.now();
+		if (!firstTokenAt) {
+			firstTokenAt = now;
+		} else {
+			const gap = now - lastUpdateAt;
+			if (gap > STALL_MS) {
+				stallCount++;
+				stallMs += gap;
+			}
+		}
+		lastUpdateAt = now;
+	});
+
+	pi.on("message_end", (event: any) => {
+		const m = event?.message;
+		const out = m?.usage?.output ?? 0;
+		totalIn += m?.usage?.input ?? 0;
+		totalOut += out;
+		if (msgStart && firstTokenAt) {
+			lastTtft = (firstTokenAt - msgStart) / 1000;
+			const genSec = (Date.now() - firstTokenAt) / 1000;
+			if (genSec > 0.05 && out > 0) lastTps = out / genSec;
+		}
+	});
+
+	pi.on("turn_end", (_event: any, ctx: any) => {
+		turns++;
+		renderWidget(ctx);
 	});
 
 	function renderWidget(ctx: any): void {
 		try {
 			if (!ctx?.ui) return;
 
-			let input = 0, output = 0, cost = 0;
-			try {
-				for (const e of ctx.sessionManager?.getBranch() ?? []) {
-					if (e.type === "message" && (e.message as AssistantMessage).role === "assistant") {
-						const m = e.message as AssistantMessage;
-						input += m.usage?.input ?? 0;
-						output += m.usage?.output ?? 0;
-						cost += m.usage?.cost?.total ?? 0;
+			// Token fallback: message_end usage is authoritative, but a resumed
+			// session starts with prior messages already in the branch.
+			let tok = totalIn + totalOut;
+			if (tok === 0) {
+				try {
+					for (const e of ctx.sessionManager?.getBranch() ?? []) {
+						if (e.type === "message" && e.message?.role === "assistant") {
+							tok += (e.message.usage?.input ?? 0) + (e.message.usage?.output ?? 0);
+						}
 					}
-				}
-			} catch { /* session not ready */ }
-
-			const segments: string[] = [];
-
-			const tok = input + output;
-			if (tok > 0) segments.push(`${CYAN}↑${fmt(input)} ↓${fmt(output)}${RESET}`);
-
-			if (kernCount > 0) segments.push(`${GREEN}◆ ${kernCount}${RESET}`);
-
-			const frontierDir = join(root, "gantt");
-			if (existsSync(frontierDir)) {
-				const c = frontierCursor(frontierDir);
-				if (c) {
-					const parts = [`${c.done}/${c.total}`];
-					if (c.ready.length) parts.push(c.ready[0]!);
-					if (c.waiting.length) parts.push(`!${c.waiting.length}`);
-					segments.push(`${YELLOW}◈ ${parts.join(" ")}${RESET}`);
-				}
+				} catch { /* session not ready */ }
 			}
 
-			const branch = gitBranch(root);
-			if (branch) segments.push(`${MAGENTA}⎇ ${branch}${RESET}`);
+			const seg = (color: string, icon: string, label: string): string =>
+				`${color}${icon}${RESET} ${DIM}${label}${RESET}`;
+			const segments: string[] = [];
 
-			if (cost > 0) segments.push(`${BLUE}$${cost.toFixed(4)}${RESET}`);
+			if (lastTps > 0) segments.push(seg(CYAN, ICONS.tps, `TPS ${lastTps.toFixed(1)} tok/s`));
+			if (lastTtft > 0) segments.push(seg(BLUE, ICONS.ttft, `TTFT ${lastTtft.toFixed(1)}s`));
+			// Duration is the always-present anchor.
+			segments.push(seg(DIM, ICONS.dur, hms((Date.now() - sessionStart) / 1000)));
+			if (turns > 0) segments.push(seg(MAGENTA, ICONS.turns, `${turns}`));
+			if (tok > 0) segments.push(seg(GREEN, ICONS.tok, fmt(tok)));
+			if (stallCount > 0)
+				segments.push(seg(RED, ICONS.stall, `stall ${stallCount}x / ${hms(stallMs / 1000)}`));
 
-			// Session duration is the always-present anchor: pure arithmetic, no
-			// flaky git/session I/O, so the session line renders after every settle
-			// even when every other segment is empty.
-			segments.push(`${DIM}◷ ${sessionDuration(sessionStart)}${RESET}`);
-
-			const line = segments.join(`${DIM} · ${RESET}`);
+			const line = segments.join(`${DIM} | ${RESET}`);
 			if (line === lastFrame) return;
 			lastFrame = line;
 
@@ -141,7 +171,6 @@ export function installStarship(pi: ExtensionAPI): void {
 	}
 
 	pi.on("agent_settled", (_event: any, ctx: any) => renderWidget(ctx));
-	pi.on("turn_end", (_event: any, ctx: any) => renderWidget(ctx));
 
 	function startClock(ctx: any): void {
 		if (timer) return;
@@ -154,15 +183,6 @@ export function installStarship(pi: ExtensionAPI): void {
 		}, 30000);
 		(timer as any).unref?.();
 	}
-
-	pi.on("session_start", (_event: any, ctx: any) => {
-		try {
-			if (timer) { clearInterval(timer); timer = undefined; }
-			startClock(ctx);
-		} catch (err) {
-			console.error("[pi-ui] starship session_start error:", (err as Error).message);
-		}
-	});
 
 	pi.on("session_shutdown", () => {
 		if (timer) clearInterval(timer);
