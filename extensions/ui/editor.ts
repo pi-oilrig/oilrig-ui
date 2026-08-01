@@ -481,7 +481,9 @@ function installLeftBar(editor: any, theme: any): void {
 		const label = model ? `${model} ${thinking}` : "";
 		if (!label) return lines;
 		const bar = ` ${theme.fg("dim", label)} `;
-		lines[0] = `${bar}${lines[0]}`;
+		const barWidth = visibleWidth(bar);
+		// Truncate the first line to fit within terminal width after prepending the label
+		lines[0] = `${bar}${truncateToWidth(lines[0], Math.max(0, width - barWidth), "")}`;
 		return lines;
 	};
 }
