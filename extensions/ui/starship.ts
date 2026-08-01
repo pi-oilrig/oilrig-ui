@@ -107,7 +107,7 @@ export function installStarship(pi: ExtensionAPI): void {
 
 			if (kernCount > 0) segments.push(`${GREEN}◆ ${kernCount}${RESET}`);
 
-			const frontierDir = join(root, "frontier");
+			const frontierDir = join(root, "gantt");
 			if (existsSync(frontierDir)) {
 				const c = frontierCursor(frontierDir);
 				if (c) {
@@ -121,12 +121,13 @@ export function installStarship(pi: ExtensionAPI): void {
 			const branch = gitBranch(root);
 			if (branch) segments.push(`${MAGENTA}⎇ ${branch}${RESET}`);
 
-			const dur = Date.now() - sessionStart;
-			if (dur > 30000) segments.push(`${DIM}◷ ${sessionDuration(sessionStart)}${RESET}`);
-
 			if (cost > 0) segments.push(`${BLUE}$${cost.toFixed(4)}${RESET}`);
 
-			if (segments.length === 0) return;
+			// Session duration is the always-present anchor: pure arithmetic, no
+			// flaky git/session I/O, so the session line renders after every settle
+			// even when every other segment is empty.
+			segments.push(`${DIM}◷ ${sessionDuration(sessionStart)}${RESET}`);
+
 			const line = segments.join(`${DIM} · ${RESET}`);
 			if (line === lastFrame) return;
 			lastFrame = line;

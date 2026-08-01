@@ -186,6 +186,20 @@ await fire(stylePi, "session_start", {}, starCtx);
 await fire(stylePi, "agent_settled", {}, starCtx);
 check("starship widget set", widgetSet);
 
+// Regression: with zero tokens and no git branch the widget must STILL render
+// (session-duration anchor) — dropping the model segment used to collapse it to
+// empty → early return → no session line after a response.
+let bareWidget = null;
+const bareCtx = {
+	mode: "tui",
+	projectRoot: "/nonexistent-xyzzy-" + Date.now(),
+	sessionManager: { getBranch: () => [] },
+	ui: { ...starCtx.ui, setWidget: (k, lines) => { bareWidget = lines; } },
+};
+await fire(stylePi, "session_start", {}, bareCtx);
+await fire(stylePi, "agent_settled", {}, bareCtx);
+check("starship renders a line with no tokens/branch", Array.isArray(bareWidget) && bareWidget.join("").trim().length > 0);
+
 for (const line of results) console.log(line);
 const failed = results.filter((x) => x.startsWith("FAIL"));
 if (failed.length) { console.error(`\n${failed.length} check(s) failed`); process.exit(1); }
