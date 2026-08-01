@@ -36,10 +36,12 @@ export const matchesKey = (data, key) => data === key;
 export const getKeybindings = () => ({ matches: () => false });
 export const sliceByColumn = (s, start, len) => s.slice(start, start + len);
 export const Key = { up: "up", down: "down", left: "left", right: "right", home: "home", end: "end", pageUp: "pageUp", pageDown: "pageDown" };
+export class Text { constructor(t){ this._t = t; } render(w){ return [String(this._t)]; } }
+export class Container { constructor(){ this._c = []; } addChild(c){ this._c.push(c); } render(w){ return this._c.flatMap(x => (x && x.render) ? x.render(w) : []); } }
 `);
 for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
 	mkdirSync(join(SCRATCH, "node_modules", pkg), { recursive: true });
-	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } moveCursor(dl, dc) { this.state.cursorLine = Math.max(0, Math.min(this.state.lines.length - 1, this.state.cursorLine + dl)); this.state.cursorCol = Math.max(0, this.state.cursorCol + dc); } moveToLineStart() { this.state.cursorCol = 0; } moveToLineEnd() { this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length; } pageScroll(dir) {} render(w) { return this.state.lines.map(l => l || " "); } segment(line, type) { return []; } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export const ExtensionAPI = {};`);
+	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } moveCursor(dl, dc) { this.state.cursorLine = Math.max(0, Math.min(this.state.lines.length - 1, this.state.cursorLine + dl)); this.state.cursorCol = Math.max(0, this.state.cursorCol + dc); } moveToLineStart() { this.state.cursorCol = 0; } moveToLineEnd() { this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length; } pageScroll(dir) {} render(w) { return this.state.lines.map(l => l || " "); } segment(line, type) { return []; } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export class DynamicBorder { constructor(color){ this._color = color || (s => s); } render(w){ return [this._color("-".repeat(Math.max(1, w)))]; } } export const ExtensionAPI = {};`);
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "package.json"), JSON.stringify({ name: pkg, version: "0.0.0", main: "index.js", exports: { ".": "./index.js" } }));
 }
 writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-test", type: "module", pi: {} }));
@@ -164,6 +166,14 @@ try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
 check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");
 
 // ── starship ──
+const themeStub = { fg: (k, t) => t };
+const widgetText = (content) => {
+	if (typeof content === "function") {
+		const comp = content({}, themeStub);
+		return (comp && comp.render ? comp.render(80) : []).join(" ");
+	}
+	return Array.isArray(content) ? content.join(" ") : "";
+};
 let widgetSet = false;
 let statusSet = false;
 const starCtx = {
@@ -198,7 +208,7 @@ const bareCtx = {
 };
 await fire(stylePi, "session_start", {}, bareCtx);
 await fire(stylePi, "agent_settled", {}, bareCtx);
-check("starship renders a line with no tokens/branch", Array.isArray(bareWidget) && bareWidget.join("").trim().length > 0);
+check("starship renders a line with no tokens/branch", widgetText(bareWidget).trim().length > 0);
 
 // Full telemetry: drive a streamed message + turn, assert TPS/TTFT/tokens/turns.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -217,10 +227,10 @@ await fire(stylePi, "message_update", {}, teleCtx); // first token
 await sleep(70);
 await fire(stylePi, "message_update", {}, teleCtx);
 await fire(stylePi, "message_end", { message: usage }, teleCtx);
-const afterMsg = (teleWidget ?? []).join(" ");
+const afterMsg = widgetText(teleWidget);
 check("starship renders after each message (message_end)", /TPS/.test(afterMsg) && /tok\/s/.test(afterMsg));
 await fire(stylePi, "agent_end", { messages: [usage] }, teleCtx);
-const teleLine = (teleWidget ?? []).join(" ");
+const teleLine = widgetText(teleWidget);
 check("starship telemetry: TTFT", /TTFT/.test(teleLine));
 check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
 check("starship telemetry: pipe-separated", teleLine.includes(" | "));

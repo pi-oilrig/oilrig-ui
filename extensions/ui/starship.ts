@@ -15,8 +15,8 @@
 // output} is authoritative there. TTFT/stall come from streaming events.
 // Renders via ctx.ui.setWidget placement "belowEditor" on agent_end/settle/clock.
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { DynamicBorder, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { BLUE, CYAN, DIM, GREEN, MAGENTA, RED, RESET } from "./colors.ts";
 
 const WIDGET_KEY = "starship";
@@ -178,9 +178,19 @@ export function installStarship(pi: ExtensionAPI): void {
 			if (line === lastFrame) return;
 			lastFrame = line;
 
-			const width = process.stdout.columns ?? 80;
-			const wrapped = truncateToWidth(` ${line} `, width);
-			ctx.ui.setWidget(WIDGET_KEY, [wrapped], { placement: "belowEditor" });
+			// Themed, bordered widget via the factory form (assembly pattern):
+			// a dim rule separates it from the editor above, the telemetry line
+			// sits below. DynamicBorder needs an explicit color fn (jiti caveat).
+			ctx.ui.setWidget(
+				WIDGET_KEY,
+				(_tui: any, thm: any) => {
+					const c = new Container();
+					c.addChild(new DynamicBorder((s: string) => thm.fg("borderMuted", s)));
+					c.addChild(new Text(` ${line}`, 1, 0));
+					return c;
+				},
+				{ placement: "belowEditor" },
+			);
 		} catch (err) {
 			console.error("[pi-ui] starship render error:", (err as Error).message);
 		}
