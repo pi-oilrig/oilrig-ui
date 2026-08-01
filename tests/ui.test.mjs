@@ -210,13 +210,12 @@ const teleCtx = {
 	ui: { ...starCtx.ui, setWidget: (k, l) => { teleWidget = l; } },
 };
 await fire(stylePi, "session_start", {}, teleCtx);
-await fire(stylePi, "message_start", {}, teleCtx);
+await fire(stylePi, "agent_start", {}, teleCtx);
 await sleep(30);
 await fire(stylePi, "message_update", {}, teleCtx); // first token
 await sleep(70);
 await fire(stylePi, "message_update", {}, teleCtx);
-await fire(stylePi, "message_end", { message: { role: "assistant", usage: { input: 1000, output: 500 } } }, teleCtx);
-await fire(stylePi, "turn_end", {}, teleCtx);
+await fire(stylePi, "agent_end", { messages: [{ role: "assistant", usage: { input: 1000, output: 500 } }] }, teleCtx);
 const teleLine = (teleWidget ?? []).join(" ");
 check("starship telemetry: TPS + tok/s", /TPS/.test(teleLine) && /tok\/s/.test(teleLine));
 check("starship telemetry: TTFT", /TTFT/.test(teleLine));

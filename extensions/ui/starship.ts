@@ -3,19 +3,21 @@
 // Format (nerd-font icons, " | " separated):
 //   󰓅 TPS 71.7 tok/s |  TTFT 6.7s |  3m 26s |  14 |  12k |  stall 27x / 1m 51s
 //
-// TPS  — output tok/s of the last assistant message (out tokens / gen time).
-// TTFT — time to first token of the last message (message_start → first update).
+// TPS  — output tok/s of the last agent run (out tokens / agent_start→end).
+// TTFT — time to first token (agent_start → first message_update).
 // dur  — session wall-clock (always present; the anchor).
-// turns— completed agent turns this session.
+// turns— completed agent runs this session (agent_end count).
 // tok  — total session tokens (input + output).
 // stall— count + total time of streaming gaps over STALL_MS.
 //
-// All timing is derived from message_start/update/end + turn_end events.
-// Renders via ctx.ui.setWidget placement "belowEditor" on settle/turn/clock.
+// Token/TPS math follows the proven ~/.config/assembly/share/extensions/tps.ts
+// path: agent_end carries event.messages, and assistant message.usage.{input,
+// output} is authoritative there. TTFT/stall come from streaming events.
+// Renders via ctx.ui.setWidget placement "belowEditor" on agent_end/settle/clock.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { BLUE, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW } from "./colors.ts";
+import { BLUE, CYAN, DIM, GREEN, MAGENTA, RED, RESET } from "./colors.ts";
 
 const WIDGET_KEY = "starship";
 
@@ -30,7 +32,7 @@ const ICONS = {
 	ttft: "\u{F051F}", // 󰔟 md-timer-sand
 	dur: "\u{F0150}", // 󰅐 md-clock-outline
 	turns: "\u{F04AD}", // 󰒭 md-message-reply
-	tok: "\u{F0BC5}", // 󰯅 md-pound / hash
+	tok: "\u{F0BC5}", // 󰯅 md-pound
 	stall: "\u{F0026}", // 󰀦 md-alert
 };
 
@@ -50,6 +52,10 @@ function hms(totalSec: number): string {
 	return `${hr}h ${min % 60}m`;
 }
 
+function isAssistant(m: any): boolean {
+	return !!m && typeof m === "object" && m.role === "assistant";
+}
+
 // ── extension entry ────────────────────────────────────────────────────────
 
 export function installStarship(pi: ExtensionAPI): void {
@@ -64,8 +70,8 @@ export function installStarship(pi: ExtensionAPI): void {
 	let stallCount = 0;
 	let stallMs = 0;
 
-	// per-message streaming timing
-	let msgStart = 0;
+	// per-run streaming timing
+	let agentStartMs = 0;
 	let firstTokenAt = 0;
 	let lastUpdateAt = 0;
 	let lastTps = 0;
@@ -79,7 +85,7 @@ export function installStarship(pi: ExtensionAPI): void {
 		totalOut = 0;
 		stallCount = 0;
 		stallMs = 0;
-		msgStart = 0;
+		agentStartMs = 0;
 		firstTokenAt = 0;
 		lastUpdateAt = 0;
 		lastTps = 0;
@@ -91,16 +97,17 @@ export function installStarship(pi: ExtensionAPI): void {
 		startClock(ctx);
 	});
 
-	pi.on("message_start", () => {
-		msgStart = Date.now();
+	pi.on("agent_start", () => {
+		agentStartMs = Date.now();
 		firstTokenAt = 0;
-		lastUpdateAt = msgStart;
+		lastUpdateAt = agentStartMs;
 	});
 
 	pi.on("message_update", () => {
 		const now = Date.now();
 		if (!firstTokenAt) {
 			firstTokenAt = now;
+			if (agentStartMs) lastTtft = (now - agentStartMs) / 1000;
 		} else {
 			const gap = now - lastUpdateAt;
 			if (gap > STALL_MS) {
@@ -111,20 +118,20 @@ export function installStarship(pi: ExtensionAPI): void {
 		lastUpdateAt = now;
 	});
 
-	pi.on("message_end", (event: any) => {
-		const m = event?.message;
-		const out = m?.usage?.output ?? 0;
-		totalIn += m?.usage?.input ?? 0;
-		totalOut += out;
-		if (msgStart && firstTokenAt) {
-			lastTtft = (firstTokenAt - msgStart) / 1000;
-			const genSec = (Date.now() - firstTokenAt) / 1000;
-			if (genSec > 0.05 && out > 0) lastTps = out / genSec;
-		}
-	});
-
-	pi.on("turn_end", (_event: any, ctx: any) => {
+	pi.on("agent_end", (event: any, ctx: any) => {
 		turns++;
+		let runOut = 0;
+		for (const m of event?.messages ?? []) {
+			if (!isAssistant(m)) continue;
+			totalIn += m.usage?.input ?? 0;
+			totalOut += m.usage?.output ?? 0;
+			runOut += m.usage?.output ?? 0;
+		}
+		if (agentStartMs) {
+			const elapsed = (Date.now() - agentStartMs) / 1000;
+			if (elapsed > 0.05 && runOut > 0) lastTps = runOut / elapsed;
+		}
+		agentStartMs = 0;
 		renderWidget(ctx);
 	});
 
@@ -132,13 +139,13 @@ export function installStarship(pi: ExtensionAPI): void {
 		try {
 			if (!ctx?.ui) return;
 
-			// Token fallback: message_end usage is authoritative, but a resumed
-			// session starts with prior messages already in the branch.
+			// message.usage summed across the run is authoritative; on a resumed
+			// session with no run yet, fall back to the branch total.
 			let tok = totalIn + totalOut;
 			if (tok === 0) {
 				try {
 					for (const e of ctx.sessionManager?.getBranch() ?? []) {
-						if (e.type === "message" && e.message?.role === "assistant") {
+						if (e.type === "message" && isAssistant(e.message)) {
 							tok += (e.message.usage?.input ?? 0) + (e.message.usage?.output ?? 0);
 						}
 					}
