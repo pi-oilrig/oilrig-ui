@@ -83,59 +83,63 @@ export function installStarship(pi: ExtensionAPI): void {
 	});
 
 	function renderWidget(ctx: any): void {
-		if (!ctx?.ui) return;
-
-		let input = 0, output = 0, cost = 0;
 		try {
-			for (const e of ctx.sessionManager?.getBranch() ?? []) {
-				if (e.type === "message" && (e.message as AssistantMessage).role === "assistant") {
-					const m = e.message as AssistantMessage;
-					input += m.usage?.input ?? 0;
-					output += m.usage?.output ?? 0;
-					cost += m.usage?.cost?.total ?? 0;
+			if (!ctx?.ui) return;
+
+			let input = 0, output = 0, cost = 0;
+			try {
+				for (const e of ctx.sessionManager?.getBranch() ?? []) {
+					if (e.type === "message" && (e.message as AssistantMessage).role === "assistant") {
+						const m = e.message as AssistantMessage;
+						input += m.usage?.input ?? 0;
+						output += m.usage?.output ?? 0;
+						cost += m.usage?.cost?.total ?? 0;
+					}
+				}
+			} catch { /* session not ready */ }
+
+			const theme = ctx.ui.theme;
+			const segments: string[] = [];
+
+			const model = ctx.model?.id ?? "";
+			if (model) segments.push(theme.fg("accent", model));
+
+			const tok = input + output;
+			if (tok > 0) segments.push(theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)}`));
+
+			if (kernCount > 0) segments.push(theme.fg("info", `kern ${kernCount}`));
+
+			const frontierDir = join(root, "frontier");
+			if (existsSync(frontierDir)) {
+				const c = frontierCursor(frontierDir);
+				if (c) {
+					const parts = [`${c.done}/${c.total}`];
+					if (c.ready.length) parts.push(c.ready[0]!);
+					if (c.waiting.length) parts.push(`!${c.waiting.length}`);
+					segments.push(theme.fg("warning", `plan ${parts.join(" ")}`));
 				}
 			}
-		} catch { /* session not ready */ }
 
-		const theme = ctx.ui.theme;
-		const segments: string[] = [];
+			const branch = gitBranch(root);
+			if (branch) segments.push(theme.fg("dim", branch));
 
-		const model = ctx.model?.id ?? "";
-		if (model) segments.push(theme.fg("accent", model));
+			const dur = Date.now() - sessionStart;
+			if (dur > 30000) segments.push(theme.fg("dim", sessionDuration(sessionStart)));
 
-		const tok = input + output;
-		if (tok > 0) segments.push(theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)}`));
+			if (cost > 0) segments.push(theme.fg("dim", `$${cost.toFixed(4)}`));
 
-		if (kernCount > 0) segments.push(theme.fg("info", `kern ${kernCount}`));
+			if (segments.length === 0) return;
+			const line = segments.join(" · ");
+			if (line === lastFrame) return;
+			lastFrame = line;
 
-		const frontierDir = join(root, "frontier");
-		if (existsSync(frontierDir)) {
-			const c = frontierCursor(frontierDir);
-			if (c) {
-				const parts = [`${c.done}/${c.total}`];
-				if (c.ready.length) parts.push(c.ready[0]!);
-				if (c.waiting.length) parts.push(`!${c.waiting.length}`);
-				segments.push(theme.fg("warning", `plan ${parts.join(" ")}`));
-			}
+			const width = process.stdout.columns ?? 80;
+			const wrapped = truncateToWidth(` ${line} `, width);
+			ctx.ui.setWidget(WIDGET_KEY, [wrapped], { placement: "belowEditor" });
+			ctx.ui.setStatus(STATUS_KEY, theme.fg("dim", `starship ${model || ""} ${fmt(input + output)}`));
+		} catch (err) {
+			console.error("[pi-ui] starship render error:", (err as Error).message);
 		}
-
-		const branch = gitBranch(root);
-		if (branch) segments.push(theme.fg("dim", branch));
-
-		const dur = Date.now() - sessionStart;
-		if (dur > 30000) segments.push(theme.fg("dim", sessionDuration(sessionStart)));
-
-		if (cost > 0) segments.push(theme.fg("dim", `$${cost.toFixed(4)}`));
-
-		if (segments.length === 0) return;
-		const line = segments.join(" · ");
-		if (line === lastFrame) return;
-		lastFrame = line;
-
-		const width = process.stdout.columns ?? 80;
-		const wrapped = truncateToWidth(` ${line} `, width);
-		ctx.ui.setWidget(WIDGET_KEY, [wrapped], { placement: "belowEditor" });
-		ctx.ui.setStatus(STATUS_KEY, theme.fg("dim", `starship ${model || ""} ${fmt(input + output)}`));
 	}
 
 	pi.on("agent_settled", (_event: any, ctx: any) => renderWidget(ctx));
@@ -144,14 +148,22 @@ export function installStarship(pi: ExtensionAPI): void {
 	function startClock(ctx: any): void {
 		if (timer) return;
 		timer = setInterval(() => {
-			if (ctx?.ui) { lastFrame = ""; renderWidget(ctx); }
+			try {
+				if (ctx?.ui) { lastFrame = ""; renderWidget(ctx); }
+			} catch (err) {
+				console.error("[pi-ui] starship clock error:", (err as Error).message);
+			}
 		}, 30000);
 		(timer as any).unref?.();
 	}
 
 	pi.on("session_start", (_event: any, ctx: any) => {
-		if (timer) { clearInterval(timer); timer = undefined; }
-		startClock(ctx);
+		try {
+			if (timer) { clearInterval(timer); timer = undefined; }
+			startClock(ctx);
+		} catch (err) {
+			console.error("[pi-ui] starship session_start error:", (err as Error).message);
+		}
 	});
 
 	pi.on("session_shutdown", () => {

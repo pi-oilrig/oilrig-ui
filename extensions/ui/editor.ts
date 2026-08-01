@@ -10,6 +10,7 @@
 
 import {
 	CustomEditor,
+	getSelectListTheme,
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -176,20 +177,21 @@ function installSelection(editor: any): void {
 	const sel = { active: false, anchor: { line: 0, col: 0 } as Pos, head: { line: 0, col: 0 } as Pos };
 
 	editor.onExtensionShortcut = ((orig: any) => function (this: any, data: string) {
-		if (orig?.call(this, data)) return true;
+		try {
+			if (orig?.call(this, data)) return true;
 
-		// ctrl+shift+a = select all
-		if (matchesKey(data, "ctrl+shift+a") || matchesKey(data, "ctrl+A")) {
-			const state = this.state;
-			sel.active = true;
-			sel.anchor = { line: 0, col: 0 };
-			const last = state.lines.length - 1;
-			sel.head = { line: last, col: (state.lines[last] || "").length };
-			this.emitChange();
-			return true;
-		}
+			// ctrl+shift+a = select all
+			if (matchesKey(data, "ctrl+shift+a") || matchesKey(data, "ctrl+A")) {
+				const state = this.state;
+				sel.active = true;
+				sel.anchor = { line: 0, col: 0 };
+				const last = state.lines.length - 1;
+				sel.head = { line: last, col: (state.lines[last] || "").length };
+				this.emitChange();
+				return true;
+			}
 
-		// ctrl+c = copy
+			// ctrl+c = copy
 		if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+C")) {
 			if (sel.active) {
 				const text = extractSelection(this, sel.anchor, sel.head);
@@ -282,23 +284,31 @@ function installSelection(editor: any): void {
 		}
 
 		return false;
-	})(editor.onExtensionShortcut);
+	} catch (err) {
+		console.error("[pi-ui] selection shortcut error:", (err as Error).message);
+		return false;
+	}
+})(editor.onExtensionShortcut);
 
 	// Overlay selection on rendered lines
 	const origRender = editor.render.bind(editor);
 	editor.render = (width: number) => {
-		const lines = origRender(width);
-		if (!sel.active) return lines;
-		const s = normalize(sel.anchor, sel.head);
-		const layout = buildLayout(editor, width);
-		// smallest index in layout with a row in the selection range
-		return lines.map((line: string, i: number) => {
-			const row = layout[i];
-			if (!row) return line;
-			const range = rowRange(row, s.start, s.end);
-			if (!range) return line;
-			return overlay(line, range.from, range.len, width);
-		});
+		try {
+			const lines = origRender(width);
+			if (!sel.active) return lines;
+			const s = normalize(sel.anchor, sel.head);
+			const layout = buildLayout(editor, width);
+			return lines.map((line: string, i: number) => {
+				const row = layout[i];
+				if (!row) return line;
+				const range = rowRange(row, s.start, s.end);
+				if (!range) return line;
+				return overlay(line, range.from, range.len, width);
+			});
+		} catch (err) {
+			console.error("[pi-ui] selection render error:", (err as Error).message);
+			return origRender(width);
+		}
 	};
 }
 
@@ -443,19 +453,24 @@ class HistoryPicker {
 function installHistory(editor: any, getCtx: () => any): void {
 	const origShortcut = editor.onExtensionShortcut?.bind(editor) ?? (() => false);
 	editor.onExtensionShortcut = function (this: any, data: string) {
-		// shift+↑ on empty editor = open history picker
-		if (matchesKey(data, "shift+up") || matchesKey(data, "shift+ArrowUp") || matchesKey(data, "shift+Up")) {
-			if (this.getText().length === 0) {
+		try {
+			// shift+↑ on empty editor = open history picker
+			if (matchesKey(data, "shift+up") || matchesKey(data, "shift+ArrowUp") || matchesKey(data, "shift+Up")) {
+				if (this.getText().length === 0) {
+					openHistoryPicker(getCtx(), this);
+					return true;
+				}
+			}
+			// ctrl+r anywhere = open history picker
+			if (matchesKey(data, "ctrl+r") || matchesKey(data, "ctrl+R")) {
 				openHistoryPicker(getCtx(), this);
 				return true;
 			}
+			return origShortcut.call(this, data);
+		} catch (err) {
+			console.error("[pi-ui] history shortcut error:", (err as Error).message);
+			return false;
 		}
-		// ctrl+r anywhere = open history picker
-		if (matchesKey(data, "ctrl+r") || matchesKey(data, "ctrl+R")) {
-			openHistoryPicker(getCtx(), this);
-			return true;
-		}
-		return origShortcut.call(this, data);
 	};
 }
 
@@ -475,17 +490,21 @@ async function openHistoryPicker(ctx: any, editor: any): Promise<void> {
 function installLeftBar(editor: any, theme: any): void {
 	const origRender = editor.render.bind(editor);
 	editor.render = (width: number) => {
-		const lines = origRender(width);
-		if (lines.length === 0) return lines;
-		const model = editor.__ctx?.model?.id ?? "";
-		const thinking = editor.__ctx?.thinkingLevel ?? "high";
-		const label = model ? `${model} ${thinking}` : "";
-		if (!label) return lines;
-		const bar = ` ${theme.fg("dim", label)} `;
-		const barWidth = visibleWidth(bar);
-		// Truncate the first line to fit within terminal width after prepending the label
-		lines[0] = `${bar}${truncateToWidth(lines[0], Math.max(0, width - barWidth), "")}`;
-		return lines;
+		try {
+			const lines = origRender(width);
+			if (lines.length === 0) return lines;
+			const model = editor.__ctx?.model?.id ?? "";
+			const thinking = editor.__ctx?.thinkingLevel ?? "high";
+			const label = model ? `${model} ${thinking}` : "";
+			if (!label) return lines;
+			const bar = ` ${theme.fg("dim", label)} `;
+			const barWidth = visibleWidth(bar);
+			lines[0] = `${bar}${truncateToWidth(lines[0], Math.max(0, width - barWidth), "")}`;
+			return lines;
+		} catch (err) {
+			console.error("[pi-ui] leftBar render error:", (err as Error).message);
+			return origRender(width);
+		}
 	};
 }
 
@@ -494,9 +513,13 @@ function installLeftBar(editor: any, theme: any): void {
 function installGanttBoard(editor: any): void {
 	const origRender = editor.render.bind(editor);
 	editor.render = (width: number) => {
-		const lines = origRender(width);
-		// Gantt lines rendered as a separate widget — no editor overlay needed
-		return lines;
+		try {
+			const lines = origRender(width);
+			return lines;
+		} catch (err) {
+			console.error("[pi-ui] ganttBoard render error:", (err as Error).message);
+			return origRender(width);
+		}
 	};
 }
 
@@ -550,7 +573,7 @@ class InputStack {
 	private stackWithTui(realTui: any, theme: any, keybindings: any, factories: Factory[]): any {
 		const editorTheme = {
 			borderColor: (text: string) => theme.fg("borderMuted", text),
-			selectList: theme.selectList,
+			selectList: getSelectListTheme(),
 		};
 
 		let live: any = null;
@@ -605,25 +628,33 @@ export function installEditor(pi: ExtensionAPI): void {
 	const stack = new InputStack();
 
 	pi.on("session_start", (_event: any, ctx: any) => {
-		if (ctx.mode !== "tui") return;
-		stack.absorb(ctx);
-		// Poll for late-registering editors
-		const until = Date.now() + 2000;
-		const poll = setInterval(() => {
+		try {
+			if (ctx.mode !== "tui") return;
 			stack.absorb(ctx);
-			if (Date.now() > until) clearInterval(poll);
-		}, 10);
-		(poll as any).unref?.();
+			// Poll for late-registering editors
+			const until = Date.now() + 2000;
+			const poll = setInterval(() => {
+				stack.absorb(ctx);
+				if (Date.now() > until) clearInterval(poll);
+			}, 10);
+			(poll as any).unref?.();
+		} catch (err) {
+			console.error("[pi-ui] editor session_start error:", (err as Error).message);
+		}
 	});
 
 	pi.on("input", (event: any, ctx: any) => {
-		if (ctx) stack.absorb(ctx);
-		if (event?.source === "interactive" && typeof event.text === "string") {
-			void record(event.text, ctx?.cwd);
-		}
-		if (event.text?.trim() === ":q") {
-			if (ctx) ctx.shutdown();
-			return { action: "handled" };
+		try {
+			if (ctx) stack.absorb(ctx);
+			if (event?.source === "interactive" && typeof event.text === "string") {
+				void record(event.text, ctx?.cwd);
+			}
+			if (event.text?.trim() === ":q") {
+				if (ctx) ctx.shutdown();
+				return { action: "handled" };
+			}
+		} catch (err) {
+			console.error("[pi-ui] editor input error:", (err as Error).message);
 		}
 		return { action: "continue" as const };
 	});

@@ -77,9 +77,13 @@ export function installStyle(pi: ExtensionAPI): void {
 	let active = true;
 
 	pi.on("input", async (event: any) => {
-		if (event?.source === "extension") return;
-		if (String(event?.text || "").trim().toLowerCase() === "normal mode") {
-			active = false;
+		try {
+			if (event?.source === "extension") return;
+			if (String(event?.text || "").trim().toLowerCase() === "normal mode") {
+				active = false;
+			}
+		} catch (err) {
+			console.error("[pi-ui] style input error:", (err as Error).message);
 		}
 	});
 
@@ -88,34 +92,46 @@ export function installStyle(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event: any) => {
-		if (!active) return;
-		return { systemPrompt: `${event.systemPrompt}\n\n${SYSTEM_PROMPT}` };
+		try {
+			if (!active) return;
+			return { systemPrompt: `${event.systemPrompt}\n\n${SYSTEM_PROMPT}` };
+		} catch (err) {
+			console.error("[pi-ui] style before_agent_start error:", (err as Error).message);
+		}
 	});
 
 	pi.on("tool_call", async (event: any) => {
-		if (!active) return;
-		if (!event || typeof event !== "object") return;
-		if (!SUBAGENT_TOOLS.has(event.toolName)) return;
-		const input = event.input;
-		if (!input || typeof input !== "object") return;
-		injectSubagentTasks(input);
+		try {
+			if (!active) return;
+			if (!event || typeof event !== "object") return;
+			if (!SUBAGENT_TOOLS.has(event.toolName)) return;
+			const input = event.input;
+			if (!input || typeof input !== "object") return;
+			injectSubagentTasks(input);
+		} catch (err) {
+			console.error("[pi-ui] style tool_call error:", (err as Error).message);
+		}
 	});
 
 	pi.on("context", async (event: any) => {
-		if (!active) return;
-		const messages = event?.messages;
-		if (!Array.isArray(messages) || messages.length === 0) return;
-		let lastUserIdx = -1;
-		for (let i = messages.length - 1; i >= 0; i--) {
-			if (messages[i]?.role === "user") { lastUserIdx = i; break; }
+		try {
+			if (!active) return;
+			const messages = event?.messages;
+			if (!Array.isArray(messages) || messages.length === 0) return;
+			let lastUserIdx = -1;
+			for (let i = messages.length - 1; i >= 0; i--) {
+				if (messages[i]?.role === "user") { lastUserIdx = i; break; }
+			}
+			if (lastUserIdx === -1) return;
+			const msg = messages[lastUserIdx];
+			const text = userText(msg);
+			if (text === null || text.includes(REMINDER_MARKER)) return;
+			const reminded = `${text}\n\n${REMINDER_MARKER}\n${REMINDER}`;
+			const next = messages.slice();
+			next[lastUserIdx] = setUserText(msg, reminded);
+			return { messages: next };
+		} catch (err) {
+			console.error("[pi-ui] style context error:", (err as Error).message);
 		}
-		if (lastUserIdx === -1) return;
-		const msg = messages[lastUserIdx];
-		const text = userText(msg);
-		if (text === null || text.includes(REMINDER_MARKER)) return;
-		const reminded = `${text}\n\n${REMINDER_MARKER}\n${REMINDER}`;
-		const next = messages.slice();
-		next[lastUserIdx] = setUserText(msg, reminded);
-		return { messages: next };
 	});
 }

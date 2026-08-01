@@ -172,39 +172,43 @@ function ensureTheme(): void {
 }
 
 export function installChrome(ctx: any): void {
-	ensureTheme();
+	try {
+		ensureTheme();
 
-	const ui = (ctx as any)?.ui;
-	if (!ui) return;
+		const ui = (ctx as any)?.ui;
+		if (!ui) return;
 
-	// 1. silence ponytail toast + status bar entry (no-op if ponytail absent)
-	if (typeof ui.notify === "function") {
-		const origNotify = ui.notify.bind(ui);
-		ui.notify = (message: string, type?: string) => {
-			if (typeof message === "string" && /Ponytail loaded:/.test(message)) return;
-			return origNotify(message, type);
+		// 1. silence ponytail toast + status bar entry (no-op if ponytail absent)
+		if (typeof ui.notify === "function") {
+			const origNotify = ui.notify.bind(ui);
+			ui.notify = (message: string, type?: string) => {
+				if (typeof message === "string" && /Ponytail loaded:/.test(message)) return;
+				return origNotify(message, type);
+			};
+		}
+		if (typeof ui.setStatus === "function") {
+			const origStatus = ui.setStatus.bind(ui);
+			ui.setStatus = (key: string, text?: string) => {
+				if (key === "ponytail") return;
+				return origStatus(key, text);
+			};
+		}
+
+		// 2. suppress open-tui welcome header (no-op if open-tui absent)
+		const uiHeader = ctx.ui as {
+			setHeader?: ((c: unknown) => void) & { __noHeader?: boolean };
 		};
-	}
-	if (typeof ui.setStatus === "function") {
-		const origStatus = ui.setStatus.bind(ui);
-		ui.setStatus = (key: string, text?: string) => {
-			if (key === "ponytail") return;
-			return origStatus(key, text);
-		};
-	}
+		if (typeof uiHeader.setHeader === "function" && !uiHeader.setHeader.__noHeader) {
+			const orig = uiHeader.setHeader.bind(uiHeader);
+			const wrapped = (_c: unknown) => orig(undefined);
+			wrapped.__noHeader = true;
+			uiHeader.setHeader = wrapped;
+			orig(undefined);
+		}
 
-	// 2. suppress open-tui welcome header (no-op if open-tui absent)
-	const uiHeader = ctx.ui as {
-		setHeader?: ((c: unknown) => void) & { __noHeader?: boolean };
-	};
-	if (typeof uiHeader.setHeader === "function" && !uiHeader.setHeader.__noHeader) {
-		const orig = uiHeader.setHeader.bind(uiHeader);
-		const wrapped = (_c: unknown) => orig(undefined);
-		wrapped.__noHeader = true;
-		uiHeader.setHeader = wrapped;
-		orig(undefined);
+		// 3. multi-row colored status line
+		wrapFooter(ui);
+	} catch (err) {
+		console.error("[pi-ui] chrome install error:", (err as Error).message);
 	}
-
-	// 3. multi-row colored status line
-	wrapFooter(ui);
 }
