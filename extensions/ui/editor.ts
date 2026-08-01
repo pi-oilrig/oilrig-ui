@@ -32,10 +32,6 @@ const requireTui = createRequire(import.meta.resolve("@earendil-works/pi-tui"));
 const { wordWrapLine } = requireTui("./components/editor.js") as any;
 const { extractAnsiCode, extractSegments } = requireTui("./utils.js") as any;
 const { findWordBackward, findWordForward } = requireTui("./word-navigation.js") as any;
-// keys.js exports it; the package index does not re-export it.
-const { decodePrintableKey } = requireTui("./keys.js") as {
-	decodePrintableKey: (data: string) => string | undefined;
-};
 
 type Pos = { line: number; col: number };
 type Row = {
@@ -383,108 +379,152 @@ async function loadHistory(limit = 500): Promise<Array<{ text: string; cwd?: str
 	} catch { return []; }
 }
 
-// ── history picker component ───────────────────────────────────────────────
+// ── history menu ───────────────────────────────────────────────────────────
+//
+// The history menu *is* the slash menu: pi's own autocomplete SelectList,
+// driven by an AutocompleteProvider that wraps whatever provider the app
+// installs. The editor keeps its slot, so the input box stays on screen with
+// the caret in it, the query is plain editor text, and every keystroke
+// re-filters through the editor's own updateAutocomplete path.
+//
+// ctrl+r (shift+↑ on an empty box) arms history mode and forces a suggestion
+// request; while armed every request is answered from pi-history.jsonl instead
+// of being delegated. ↑/↓ move, enter/tab insert, escape closes.
 
-class HistoryPicker {
-	private done: (result: string | null) => void;
-	private theme: any;
-	private entries: Array<{ text: string; display: string }>;
-	private filtered: Array<{ text: string; display: string }>;
-	private selected = 0;
-	private query = "";
-	private active = true;
+type HistEntry = { text: string; cwd?: string; ts: number };
 
-	constructor(done: (result: string | null) => void, theme: any, entries: Array<{ text: string; cwd?: string; ts: number }>) {
-		this.done = done;
-		this.theme = theme;
-		this.entries = entries.map((e) => ({
-			text: e.text,
-			display: e.text.length > 80 ? e.text.slice(0, 77) + "…" : e.text,
-		}));
-		this.filtered = [...this.entries];
+const HISTORY_MAX_VISIBLE = 10;
+// Sentinel: keeps the menu open on a query that matches nothing — an empty item
+// list makes the editor cancel autocomplete, which would drop history mode.
+const NO_MATCH = "\u0000no-match";
+
+function dedupeHistory(entries: HistEntry[]): HistEntry[] {
+	const seen = new Set<string>();
+	const out: HistEntry[] = [];
+	for (const e of entries) {
+		const text = (e?.text ?? "").trim();
+		if (!text || seen.has(text)) continue;
+		seen.add(text);
+		out.push({ text, cwd: e.cwd, ts: e.ts });
 	}
-
-	// pi's TUI calls `handleInput` on the focused component and re-renders after
-	// it returns — nothing else. A component that names its key handler anything
-	// else is focused but deaf: keys fall through to the editor underneath, the
-	// list never repaints, escape never closes.
-	handleInput(data: string): void {
-		if (!this.active) return;
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-			this.active = false;
-			this.done(null);
-			return;
-		}
-		if (matchesKey(data, "enter")) {
-			this.active = false;
-			const result = this.filtered[this.selected];
-			this.done(result ? result.text : null);
-			return;
-		}
-		if (matchesKey(data, "up")) {
-			this.selected = Math.max(0, this.selected - 1);
-			return;
-		}
-		if (matchesKey(data, "down") || matchesKey(data, "tab")) {
-			this.selected = Math.min(this.filtered.length - 1, this.selected + 1);
-			return;
-		}
-		if (matchesKey(data, "backspace")) {
-			this.setQuery(this.query.slice(0, -1));
-			return;
-		}
-		// printable char — plain byte, or a CSI-u / modifyOtherKeys sequence when
-		// the kitty protocol is live (then a letter is not a 1-char string).
-		const printable =
-			data.length === 1 && data.codePointAt(0)! >= 0x20 ? data : decodePrintableKey(data);
-		if (printable) this.setQuery(this.query + printable);
-	}
-
-	private setQuery(next: string): void {
-		this.query = next;
-		this.filtered = next
-			? fuzzyFilter(next, this.entries, (e) => e.text)
-			: [...this.entries];
-		this.selected = 0;
-	}
-
-	invalidate(): void {}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const header = ` ${this.theme.fg("accent", "History search")} ${this.query ? `— ${this.query}` : ""} `;
-		lines.push(truncateToWidth(`${"─".repeat(2)}${header}${"─".repeat(width)}`, width, ""));
-		const max = Math.min(10, this.filtered.length);
-		if (max === 0) {
-			lines.push(` ${this.theme.fg("dim", "no matches")}`);
-			return lines;
-		}
-		for (let i = 0; i < max; i++) {
-			const entry = this.filtered[i];
-			if (!entry) continue;
-			const prefix = i === this.selected ? "▸ " : "  ";
-			lines.push(`${prefix}${truncateToWidth(entry.display, width - 2, "…")}`);
-		}
-		if (this.filtered.length > max)
-			lines.push(` ${this.theme.fg("dim", `… ${this.filtered.length - max} more`)}`);
-		return lines;
-	}
+	return out;
 }
 
-function installHistory(editor: any, getCtx: () => any): void {
+function ago(ts: number): string {
+	const secs = Math.max(0, Math.round((Date.now() - (ts || 0)) / 1000));
+	if (secs < 60) return `${secs}s ago`;
+	if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+	if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+	return `${Math.round(secs / 86400)}d ago`;
+}
+
+function historyItems(
+	entries: HistEntry[],
+	query: string,
+): Array<{ value: string; label: string; description: string }> {
+	const q = query.trim();
+	// fuzzyFilter(items, query, getText) — the argument order matters: a swapped
+	// call filters against the wrong string and silently matches nothing.
+	const pool = q ? fuzzyFilter(entries, q, (e: HistEntry) => e.text) : entries;
+	if (pool.length === 0)
+		return [{ value: NO_MATCH, label: "no match", description: `${entries.length} prompts` }];
+	return pool.slice(0, 200).map((e) => ({
+		value: e.text,
+		label: e.text.replace(/\s+/g, " ").trim(),
+		description: ago(e.ts),
+	}));
+}
+
+function installHistory(editor: any): void {
+	let armed = false;
+	let entries: HistEntry[] = [];
+	let base: any = null;
+	let prevMaxVisible = 0;
+
+	const disarm = (): void => {
+		if (!armed) return;
+		armed = false;
+		if (prevMaxVisible) {
+			editor.setAutocompleteMaxVisible?.(prevMaxVisible);
+			prevMaxVisible = 0;
+		}
+	};
+
+	const provider = {
+		triggerCharacters: [] as string[],
+		getSuggestions(lines: string[], cl: number, cc: number, opts: any): Promise<any> {
+			if (!armed) return base?.getSuggestions(lines, cl, cc, opts) ?? Promise.resolve(null);
+			const query = lines.join("\n");
+			return Promise.resolve({ items: historyItems(entries, query), prefix: query });
+		},
+		applyCompletion(lines: string[], cl: number, cc: number, item: any, prefix: string): any {
+			if (!armed)
+				return base
+					? base.applyCompletion(lines, cl, cc, item, prefix)
+					: { lines, cursorLine: cl, cursorCol: cc };
+			disarm();
+			const text = item?.value === NO_MATCH ? lines.join("\n") : (item?.value ?? "");
+			const out = text.split("\n");
+			return {
+				lines: out,
+				cursorLine: out.length - 1,
+				cursorCol: (out[out.length - 1] ?? "").length,
+			};
+		},
+		// The editor skips a forced request when this returns false, so an armed
+		// menu must always claim the trigger.
+		shouldTriggerFileCompletion(lines: string[], cl: number, cc: number): boolean {
+			if (armed) return true;
+			return base?.shouldTriggerFileCompletion
+				? base.shouldTriggerFileCompletion(lines, cl, cc)
+				: true;
+		},
+	};
+
+	// pi installs its CombinedAutocompleteProvider after the factory hands the
+	// editor over — intercept the setter so ours always wraps the current one.
+	const origSet = editor.setAutocompleteProvider?.bind(editor);
+	editor.setAutocompleteProvider = (next: any): void => {
+		if (next === provider) return;
+		base = next;
+		provider.triggerCharacters = next?.triggerCharacters ?? [];
+		origSet?.(provider);
+	};
+	if (editor.autocompleteProvider) editor.setAutocompleteProvider(editor.autocompleteProvider);
+	else origSet?.(provider);
+
+	// escape, submit and a fresh provider all funnel through cancelAutocomplete.
+	const origCancel = editor.cancelAutocomplete?.bind(editor);
+	editor.cancelAutocomplete = (): void => {
+		disarm();
+		origCancel?.();
+	};
+
+	const arm = async (): Promise<void> => {
+		entries = dedupeHistory(await loadHistory(500));
+		if (!prevMaxVisible) {
+			prevMaxVisible = editor.getAutocompleteMaxVisible?.() ?? 0;
+			editor.setAutocompleteMaxVisible?.(HISTORY_MAX_VISIBLE);
+		}
+		armed = true;
+		// force = no debounce, and the "force" state keeps refilters forced too.
+		await editor.requestAutocomplete?.({ force: true, explicitTab: false });
+		editor.tui?.requestRender?.();
+	};
+
 	const origShortcut = editor.onExtensionShortcut?.bind(editor) ?? (() => false);
 	editor.onExtensionShortcut = function (this: any, data: string) {
 		try {
-			// shift+↑ on empty editor = open history picker
+			// shift+↑ on an empty box = history menu
 			if (matchesKey(data, "shift+up") || matchesKey(data, "shift+ArrowUp") || matchesKey(data, "shift+Up")) {
 				if (this.getText().length === 0) {
-					openHistoryPicker(getCtx(), this);
+					void arm();
 					return true;
 				}
 			}
-			// ctrl+r anywhere = open history picker
+			// ctrl+r anywhere = history menu, seeded with whatever is typed
 			if (matchesKey(data, "ctrl+r") || matchesKey(data, "ctrl+R")) {
-				openHistoryPicker(getCtx(), this);
+				void arm();
 				return true;
 			}
 			return origShortcut.call(this, data);
@@ -493,17 +533,6 @@ function installHistory(editor: any, getCtx: () => any): void {
 			return false;
 		}
 	};
-}
-
-async function openHistoryPicker(ctx: any, editor: any): Promise<void> {
-	const entries = await loadHistory(200);
-	try {
-		const result = await ctx.ui.custom<string | null>(
-			(_tui: any, theme: any, _keybindings: any, done: (r: string | null) => void) =>
-				new HistoryPicker(done, theme, entries),
-		);
-		if (result !== null) editor.setText(result);
-	} catch { /* cancelled */ }
 }
 
 // ── left bar ───────────────────────────────────────────────────────────────
@@ -642,7 +671,7 @@ class InputStack {
 				};
 				const ed = new CustomEditor(realTui, editorTheme, keybindings);
 				installSelection(ed);
-				installHistory(ed, () => this.ctx);
+				installHistory(ed);
 				installLeftBar(ed, theme);
 				installGanttBoard(ed);
 				ed.__ctx = ctx;
@@ -681,7 +710,7 @@ class InputStack {
 
 		if (live) {
 			installSelection(live);
-			installHistory(live, () => this.ctx);
+			installHistory(live);
 			installLeftBar(live, theme);
 			installGanttBoard(live);
 			this.layers = probes.map((p, i) =>
@@ -697,7 +726,7 @@ class InputStack {
 			`layers: ${stack} → selection → history → left bar`,
 			`prototype stacking: ${this.stacked ? "on" : "off"}`,
 			"keys: shift+move extend · ctrl+shift+←/→ word · ctrl+shift+a all · ctrl+c copy · ctrl+x cut · shift+del kill to line end",
-			`history: ↑ this session · shift+↑ empty box = all sessions · ctrl+r anywhere · ${HISTORY_FILE}`,
+			`history: ↑ this session · ctrl+r (or shift+↑ on an empty box) = fuzzy menu over all sessions · ${HISTORY_FILE}`,
 			...this.notes.map((n) => `note: ${n}`),
 		].join("\n");
 	}

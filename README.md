@@ -11,7 +11,7 @@ Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
 | Module | What |
 |--------|------|
 | **style** | Terse + ADHD-friendly output discipline in system prompt, subagent injection, per-turn reminder. `normal mode` to disable. |
-| **editor** | Owns the editor slot. Stack: selection (shift+arrows, ctrl+c/v/x, ctrl+shift+a, shift+del), history (↑ this session, shift+↑/ctrl+r all sessions fuzzy picker), `:q` shutdown, left bar (model + thinking level), gantt board integration. |
+| **editor** | Owns the editor slot. Stack: selection (shift+arrows, ctrl+c/v/x, ctrl+shift+a, shift+del), history (↑ this session, shift+↑/ctrl+r = fuzzy menu over all sessions, rendered as pi's own autocomplete list so the input box stays live), `:q` shutdown, left bar (model + thinking level), gantt board integration. |
 | **chrome** | Suppresses open-tui welcome header, silences ponytail toast/status, wraps footer with colored extension-status rows + version tag. |
 | **starship** | Single-line widget below editor: model, tokens (↑in ↓out), kern ops, frontier cursor, git branch, session duration. |
 
@@ -28,8 +28,8 @@ Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
 | `shift+del` | Kill to end of line |
 | `escape` | Drop selection |
 | `↑` (empty) | Previous prompts this session |
-| `shift+↑` (empty) | Fuzzy history picker — all sessions |
-| `ctrl+r` | Fuzzy history picker — anywhere |
+| `shift+↑` (empty) | Fuzzy history menu — all sessions |
+| `ctrl+r` | Fuzzy history menu — anywhere; type to filter, ↑/↓ to move, enter/tab to insert, escape to close |
 
 ## Install
 

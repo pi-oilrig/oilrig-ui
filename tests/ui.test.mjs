@@ -35,7 +35,7 @@ writeFileSync(join(TUI, "index.js"), `
 export const visibleWidth = (s) => String(s).replace(/\\x1b\\[[0-9;]*m/g, "").length;
 export const truncateToWidth = (s, w) => { const vis = String(s).replace(/\x1b\[[0-9;]*m/g, ""); return vis.length <= w ? String(s) : String(s).slice(0, w); };
 export const CURSOR_MARKER = "\\x1b[7m";
-export const fuzzyFilter = (q, items, fn) => items.filter(i => fn(i).toLowerCase().includes(q.toLowerCase()));
+export const fuzzyFilter = (items, q, fn) => items.filter(i => fn(i).toLowerCase().includes(String(q).toLowerCase()));
 export const matchesKey = (data, key) => data === key;
 export const getKeybindings = () => ({ matches: () => false });
 export const sliceByColumn = (s, start, len) => s.slice(start, start + len);
@@ -45,7 +45,7 @@ export class Container { constructor(){ this._c = []; } addChild(c){ this._c.pus
 `);
 for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
 	mkdirSync(join(SCRATCH, "node_modules", pkg), { recursive: true });
-	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } moveCursor(dl, dc) { this.state.cursorLine = Math.max(0, Math.min(this.state.lines.length - 1, this.state.cursorLine + dl)); this.state.cursorCol = Math.max(0, this.state.cursorCol + dc); } moveToLineStart() { this.state.cursorCol = 0; } moveToLineEnd() { this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length; } pageScroll(dir) {} render(w) { return this.state.lines.map(l => l || " "); } segment(line, type) { return []; } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export class DynamicBorder { constructor(color){ this._color = color || (s => s); } render(w){ return [this._color("-".repeat(Math.max(1, w)))]; } } export const ExtensionAPI = {};`);
+	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } moveCursor(dl, dc) { this.state.cursorLine = Math.max(0, Math.min(this.state.lines.length - 1, this.state.cursorLine + dl)); this.state.cursorCol = Math.max(0, this.state.cursorCol + dc); } moveToLineStart() { this.state.cursorCol = 0; } moveToLineEnd() { this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length; } pageScroll(dir) {} render(w) { return this.state.lines.map(l => l || " "); } segment(line, type) { return []; } setAutocompleteProvider(p) { this.autocompleteProvider = p; } getAutocompleteMaxVisible() { return this.maxVisible ?? 5; } setAutocompleteMaxVisible(n) { this.maxVisible = n; } cancelAutocomplete() { this.autocompleteState = null; } isShowingAutocomplete() { return !!this.autocompleteState; } async requestAutocomplete(o) { const r = await this.autocompleteProvider.getSuggestions(this.state.lines, this.state.cursorLine, this.state.cursorCol, { signal: {}, force: o.force }); if (!r || !r.items || r.items.length === 0) { this.cancelAutocomplete(); return; } this.autocompletePrefix = r.prefix; this.autocompleteItems = r.items; this.autocompleteState = o.force ? "force" : "regular"; } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export class DynamicBorder { constructor(color){ this._color = color || (s => s); } render(w){ return [this._color("-".repeat(Math.max(1, w)))]; } } export const ExtensionAPI = {};`);
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "package.json"), JSON.stringify({ name: pkg, version: "0.0.0", main: "index.js", exports: { ".": "./index.js" } }));
 }
 writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-test", type: "module", pi: {} }));
@@ -180,43 +180,59 @@ let cutThrew = false;
 try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
 check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");
 
-// ── history picker (regression: named its key handler handleKey, so pi's TUI —
-// which only ever calls handleInput — left it focused but deaf) ──
-let pickerFactory = null;
-editorCtx.ui.custom = async (factory) => { pickerFactory = factory; return null; };
+// ── history menu (regression: fuzzyFilter's args were swapped, so typing never
+// filtered; and the old picker took over ui.custom, so the input box vanished.
+// It is now pi's own autocomplete menu — editor keeps the slot) ──
+const baseProvider = {
+	triggerCharacters: ["@"],
+	calls: 0,
+	getSuggestions() { baseProvider.calls++; return Promise.resolve(null); },
+	applyCompletion() { return { lines: ["base"], cursorLine: 0, cursorCol: 4 }; },
+};
+ed.setAutocompleteProvider(baseProvider);
+const wrapped = ed.autocompleteProvider;
+check("history wraps the app's provider", wrapped !== baseProvider && wrapped.triggerCharacters[0] === "@");
+
+await wrapped.getSuggestions([""], 0, 0, {});
+check("unarmed suggestions delegate to the app's provider", baseProvider.calls === 1);
+
 ed.setText("");
-const opened = ed.onExtensionShortcut("shift+up");
-// Poll, don't sleep: ui.custom is awaited inside the shortcut handler, so the
-// factory lands a microtask-plus later. A fixed delay loses the race whenever
-// the box is loaded (e.g. the probe running every package's tests at once).
-for (let i = 0; i < 200 && pickerFactory === null; i++)
-	await new Promise(r => setTimeout(r, 10));
-check("shift+up on empty editor opens the picker", opened === true && pickerFactory !== null);
+const armed = ed.onExtensionShortcut("ctrl+r");
+// arm() awaits loadHistory + requestAutocomplete, so the menu lands a few
+// microtasks later — poll rather than sleep.
+for (let i = 0; i < 200 && !ed.autocompleteState; i++) await new Promise(r => setTimeout(r, 10));
+check("ctrl+r opens the history menu", armed === true && ed.autocompleteState === "force");
+check("the editor keeps the slot — input box stays live", ed.getText() === "" && ed.autocompleteProvider === wrapped);
+const order = (v) => ed.autocompleteItems.findIndex((i) => i.value === v);
+check("menu lists history newest-first", order("gamma three") >= 0 && order("gamma three") < order("beta two") && order("beta two") < order("alpha one"));
+check("menu shows more rows than the slash menu", ed.getAutocompleteMaxVisible() === 10);
 
-const picker = pickerFactory({}, editorCtx.ui.theme, {}, () => {});
-check("picker implements the Component contract", typeof picker.handleInput === "function" && typeof picker.render === "function" && typeof picker.invalidate === "function");
-check("picker lists history newest-first", picker.render(80).join("\n").includes("gamma three"));
-picker.handleInput("b");
-const filtered = picker.render(80).join("\n");
-check("typing filters the list", filtered.includes("beta two") && !filtered.includes("gamma three"));
-picker.handleInput("backspace");
-check("backspace restores the full list", picker.render(80).join("\n").includes("gamma three"));
+ed.setText("bet");
+await ed.requestAutocomplete({ force: true, explicitTab: false });
+check("typing filters the menu", ed.autocompleteItems.length === 1 && ed.autocompleteItems[0].value === "beta two");
 
-let escResult = "unset";
-const escPicker = pickerFactory({}, editorCtx.ui.theme, {}, (r) => { escResult = r; });
-escPicker.handleInput("escape");
-check("escape closes the picker", escResult === null);
+ed.setText("zzzz");
+await ed.requestAutocomplete({ force: true, explicitTab: false });
+check("a query with no match keeps the menu open", ed.autocompleteState === "force" && ed.autocompleteItems[0].label === "no match");
 
-let enterResult = "unset";
-const enterPicker = pickerFactory({}, editorCtx.ui.theme, {}, (r) => { enterResult = r; });
-enterPicker.handleInput("e"); enterPicker.handleInput("t"); enterPicker.handleInput("a");
-enterPicker.handleInput("enter");
-check("enter returns the selected entry", enterResult === "beta two");
+ed.setText("bet");
+await ed.requestAutocomplete({ force: true, explicitTab: false });
+const applied = wrapped.applyCompletion(ed.state.lines, 0, 3, ed.autocompleteItems[0], ed.autocompletePrefix);
+check("selecting replaces the box with the whole prompt", applied.lines.join("\n") === "beta two" && applied.cursorCol === 8);
+check("selecting restores the slash menu's row count", ed.getAutocompleteMaxVisible() === 5);
 
-const navPicker = pickerFactory({}, editorCtx.ui.theme, {}, () => {});
-const firstSelected = navPicker.render(60).findIndex((l) => l.startsWith("\u25b8"));
-navPicker.handleInput("down");
-check("down moves the selection", navPicker.render(60).findIndex((l) => l.startsWith("\u25b8")) === firstSelected + 1);
+baseProvider.calls = 0;
+await wrapped.getSuggestions(["bet"], 0, 3, {});
+check("after selecting, suggestions delegate again", baseProvider.calls === 1);
+
+ed.setText("");
+ed.onExtensionShortcut("shift+up");
+for (let i = 0; i < 200 && !ed.autocompleteState; i++) await new Promise(r => setTimeout(r, 10));
+check("shift+up on an empty box opens the menu", ed.autocompleteState === "force");
+ed.cancelAutocomplete();
+baseProvider.calls = 0;
+await wrapped.getSuggestions([""], 0, 0, {});
+check("escape disarms history mode", baseProvider.calls === 1);
 
 // ── starship ──
 const themeStub = { fg: (k, t) => t };
