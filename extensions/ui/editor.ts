@@ -170,7 +170,7 @@ function wordMove(ed: any, dir: number): void {
 		const pos = findWordForward(line, cursorCol);
 		state.cursorCol = pos;
 	}
-	ed.emitChange();
+	ed.tui?.requestRender?.();
 }
 
 function installSelection(editor: any): void {
@@ -187,7 +187,7 @@ function installSelection(editor: any): void {
 				sel.anchor = { line: 0, col: 0 };
 				const last = state.lines.length - 1;
 				sel.head = { line: last, col: (state.lines[last] || "").length };
-				this.emitChange();
+				this.tui?.requestRender?.();
 				return true;
 			}
 
@@ -197,7 +197,7 @@ function installSelection(editor: any): void {
 				const text = extractSelection(this, sel.anchor, sel.head);
 				if (text) copyToClipboard(text);
 				// keep selection
-				this.emitChange();
+				this.tui?.requestRender?.();
 				return true;
 			}
 			return false;
@@ -210,7 +210,8 @@ function installSelection(editor: any): void {
 				if (text) copyToClipboard(text);
 				deleteSelection(this, sel);
 				sel.active = false;
-				this.emitChange();
+				this.onChange?.(this.getText());
+				this.tui?.requestRender?.();
 				return true;
 			}
 			return false;
@@ -220,7 +221,7 @@ function installSelection(editor: any): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "Escape") || matchesKey(data, "esc")) {
 			if (sel.active) {
 				sel.active = false;
-				this.emitChange();
+				this.tui?.requestRender?.();
 				return true;
 			}
 			return false;
@@ -230,7 +231,7 @@ function installSelection(editor: any): void {
 		if (matchesKey(data, "shift+delete") || matchesKey(data, "shift+Delete") || matchesKey(data, "shift+backspace")) {
 			if (!sel.active) {
 				const state = this.state;
-				const line = state.lines[state.cursorLine] || "";
+				const line: string = state.lines[state.cursorLine] || "";
 				if (state.cursorCol >= line.length) {
 					// empty tail, eat the line break
 					if (state.lines.length > 1) {
@@ -239,10 +240,10 @@ function installSelection(editor: any): void {
 						state.cursorCol = 0;
 					}
 				} else {
-					line = line.slice(0, state.cursorCol);
-					state.lines[state.cursorLine] = line;
+					state.lines[state.cursorLine] = line.slice(0, state.cursorCol);
 				}
-				this.emitChange();
+				this.onChange?.(this.getText());
+				this.tui?.requestRender?.();
 				return true;
 			}
 		}
@@ -254,7 +255,13 @@ function installSelection(editor: any): void {
 			if (isDelete || isChar) {
 				deleteSelection(this, sel);
 				sel.active = false;
-				// Let the key fall through to normal handler
+				if (isDelete) {
+					// selection already removed — don't let default delete one more
+					this.onChange?.(this.getText());
+					this.tui?.requestRender?.();
+					return true;
+				}
+				// typing: let the char fall through to the normal insert handler
 				return false;
 			}
 		}
@@ -269,7 +276,7 @@ function installSelection(editor: any): void {
 				move(this);
 				sel.head = { line: this.state.cursorLine, col: this.state.cursorCol };
 				sel.active = true;
-				this.emitChange();
+				this.tui?.requestRender?.();
 				return true;
 			}
 		}

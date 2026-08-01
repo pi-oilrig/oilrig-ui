@@ -39,7 +39,7 @@ export const Key = { up: "up", down: "down", left: "left", right: "right", home:
 `);
 for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
 	mkdirSync(join(SCRATCH, "node_modules", pkg), { recursive: true });
-	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } emitChange() {} moveCursor(dl, dc) { this.state.cursorLine = Math.max(0, Math.min(this.state.lines.length - 1, this.state.cursorLine + dl)); this.state.cursorCol = Math.max(0, this.state.cursorCol + dc); } moveToLineStart() { this.state.cursorCol = 0; } moveToLineEnd() { this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length; } pageScroll(dir) {} render(w) { return this.state.lines.map(l => l || " "); } segment(line, type) { return []; } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export const ExtensionAPI = {};`);
+	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } moveCursor(dl, dc) { this.state.cursorLine = Math.max(0, Math.min(this.state.lines.length - 1, this.state.cursorLine + dl)); this.state.cursorCol = Math.max(0, this.state.cursorCol + dc); } moveToLineStart() { this.state.cursorCol = 0; } moveToLineEnd() { this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length; } pageScroll(dir) {} render(w) { return this.state.lines.map(l => l || " "); } segment(line, type) { return []; } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export const ExtensionAPI = {};`);
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "package.json"), JSON.stringify({ name: pkg, version: "0.0.0", main: "index.js", exports: { ".": "./index.js" } }));
 }
 writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-test", type: "module", pi: {} }));
@@ -124,10 +124,11 @@ check("footer wrap installed", chromeCtx.ui.__statusLineWrapped === true);
 
 // ── editor stack ──
 let editorFactoryCalled = false;
+let liveFactory = null;
 const editorCtx = {
 	mode: "tui",
 	ui: {
-		setEditorComponent: (fn) => { editorFactoryCalled = true; },
+		setEditorComponent: (fn) => { editorFactoryCalled = true; liveFactory = fn; },
 		setWidget: () => {},
 		setStatus: () => {},
 		setFooter: () => {},
@@ -141,6 +142,25 @@ const editorCtx = {
 await fire(stylePi, "session_start", {}, editorCtx);
 await new Promise(r => setTimeout(r, 200));
 check("editor factory registered", editorFactoryCalled);
+
+// ── shift-selection (regression: emitChange was undefined → every key threw) ──
+let rendered = 0;
+const fakeTui = { requestRender: () => { rendered++; }, terminal: { rows: 24, columns: 80 } };
+const ed = liveFactory(fakeTui, editorCtx.ui.theme, {});
+let lastChange = null;
+ed.onChange = (t) => { lastChange = t; };
+ed.setText("hello world");
+ed.state.cursorLine = 0;
+ed.state.cursorCol = 0;
+let threw = false, handled = false;
+try { for (let i = 0; i < 5; i++) handled = ed.onExtensionShortcut("shift+right"); }
+catch { threw = true; }
+check("shift+select extends without throwing", !threw && handled === true);
+check("shift+select requests a render", rendered > 0);
+check("selection is highlighted", ed.render(80).join("\n").includes("\x1b[7m"));
+let cutThrew = false;
+try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
+check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");
 
 // ── starship ──
 let widgetSet = false;
