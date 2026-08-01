@@ -209,15 +209,18 @@ const teleCtx = {
 	sessionManager: { getBranch: () => [] },
 	ui: { ...starCtx.ui, setWidget: (k, l) => { teleWidget = l; } },
 };
+const usage = { role: "assistant", usage: { input: 1000, output: 500 } };
 await fire(stylePi, "session_start", {}, teleCtx);
-await fire(stylePi, "agent_start", {}, teleCtx);
+await fire(stylePi, "message_start", {}, teleCtx);
 await sleep(30);
 await fire(stylePi, "message_update", {}, teleCtx); // first token
 await sleep(70);
 await fire(stylePi, "message_update", {}, teleCtx);
-await fire(stylePi, "agent_end", { messages: [{ role: "assistant", usage: { input: 1000, output: 500 } }] }, teleCtx);
+await fire(stylePi, "message_end", { message: usage }, teleCtx);
+const afterMsg = (teleWidget ?? []).join(" ");
+check("starship renders after each message (message_end)", /TPS/.test(afterMsg) && /tok\/s/.test(afterMsg));
+await fire(stylePi, "agent_end", { messages: [usage] }, teleCtx);
 const teleLine = (teleWidget ?? []).join(" ");
-check("starship telemetry: TPS + tok/s", /TPS/.test(teleLine) && /tok\/s/.test(teleLine));
 check("starship telemetry: TTFT", /TTFT/.test(teleLine));
 check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
 check("starship telemetry: pipe-separated", teleLine.includes(" | "));

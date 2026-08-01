@@ -70,8 +70,8 @@ export function installStarship(pi: ExtensionAPI): void {
 	let stallCount = 0;
 	let stallMs = 0;
 
-	// per-run streaming timing
-	let agentStartMs = 0;
+	// per-message streaming timing
+	let msgStartMs = 0;
 	let firstTokenAt = 0;
 	let lastUpdateAt = 0;
 	let lastTps = 0;
@@ -85,7 +85,7 @@ export function installStarship(pi: ExtensionAPI): void {
 		totalOut = 0;
 		stallCount = 0;
 		stallMs = 0;
-		agentStartMs = 0;
+		msgStartMs = 0;
 		firstTokenAt = 0;
 		lastUpdateAt = 0;
 		lastTps = 0;
@@ -97,17 +97,19 @@ export function installStarship(pi: ExtensionAPI): void {
 		startClock(ctx);
 	});
 
-	pi.on("agent_start", () => {
-		agentStartMs = Date.now();
+	// Each assistant message: reset timing, then render on completion so the
+	// bar appears after every message (not once per user turn).
+	pi.on("message_start", () => {
+		msgStartMs = Date.now();
 		firstTokenAt = 0;
-		lastUpdateAt = agentStartMs;
+		lastUpdateAt = msgStartMs;
 	});
 
 	pi.on("message_update", () => {
 		const now = Date.now();
 		if (!firstTokenAt) {
 			firstTokenAt = now;
-			if (agentStartMs) lastTtft = (now - agentStartMs) / 1000;
+			if (msgStartMs) lastTtft = (now - msgStartMs) / 1000;
 		} else {
 			const gap = now - lastUpdateAt;
 			if (gap > STALL_MS) {
@@ -118,20 +120,27 @@ export function installStarship(pi: ExtensionAPI): void {
 		lastUpdateAt = now;
 	});
 
+	// message.usage is populated per-message for most providers; compute this
+	// response's TPS from it when present, then paint the bar.
+	pi.on("message_end", (event: any, ctx: any) => {
+		const out = event?.message?.usage?.output ?? 0;
+		if (out > 0) {
+			const base = firstTokenAt || msgStartMs || Date.now();
+			const genSec = (Date.now() - base) / 1000;
+			if (genSec > 0.05) lastTps = out / genSec;
+		}
+		renderWidget(ctx);
+	});
+
+	// agent_end carries every message of the run with authoritative usage —
+	// the reliable source for the session token/turn totals (see tps.ts).
 	pi.on("agent_end", (event: any, ctx: any) => {
 		turns++;
-		let runOut = 0;
 		for (const m of event?.messages ?? []) {
 			if (!isAssistant(m)) continue;
 			totalIn += m.usage?.input ?? 0;
 			totalOut += m.usage?.output ?? 0;
-			runOut += m.usage?.output ?? 0;
 		}
-		if (agentStartMs) {
-			const elapsed = (Date.now() - agentStartMs) / 1000;
-			if (elapsed > 0.05 && runOut > 0) lastTps = runOut / elapsed;
-		}
-		agentStartMs = 0;
 		renderWidget(ctx);
 	});
 
