@@ -4,7 +4,7 @@ Unified TUI for [pi](https://github.com/badlogic/pi-mono). One package, one
 editor slot, no double-loading.
 
 Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
-`pi-starship`, and windmill's `advanced-input.ts`.
+`pi-starship`, `pi-billboard`, and windmill's `advanced-input.ts`.
 
 ## What it does
 
@@ -14,6 +14,7 @@ Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
 | **editor** | Owns the editor slot. Stack: selection (shift+arrows, ctrl+c/v/x, ctrl+shift+a, shift+del), history (↑ this session, shift+↑/ctrl+r = fuzzy menu over all sessions, rendered as pi's own autocomplete list so the input box stays live), `:q` shutdown, left bar (model + thinking level), gantt board integration. |
 | **chrome** | Suppresses open-tui welcome header, silences ponytail toast/status, wraps footer with colored extension-status rows + version tag. |
 | **starship** | Single-line widget below editor: model, tokens (↑in ↓out), kern ops, frontier cursor, git branch, session duration. |
+| **billboard** | Info panel: one-line strip in the widget, full overlay on `alt+p` / `/billboard`. Title, turn count, last input, items (`add`/`done`/`clear`/`list`), plus a slot registry on `globalThis.__billboard` that gantt and launch draw into (`register({ id, render, size, priority })`, `/billboard slots|hide|show`). |
 
 ## Keys
 
@@ -30,6 +31,7 @@ Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
 | `↑` (empty) | Previous prompts this session |
 | `shift+↑` (empty) | Fuzzy history menu — all sessions |
 | `ctrl+r` | Fuzzy history menu — anywhere; type to filter, ↑/↓ to move, enter/tab to insert, escape to close |
+| `alt+p` | Toggle the billboard panel (min strip ↔ max overlay); `escape` closes the overlay |
 
 ## Install
 

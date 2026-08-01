@@ -4,7 +4,9 @@
 //
 // Copies the extension into a scratch package with a stubbed pi-tui and
 // asserts: style prompt appends, "normal mode" disables, :q triggers
-// shutdown, selection keys are intercepted, chrome wraps install.
+// shutdown, selection keys are intercepted, chrome wraps install, and the
+// billboard panel (folded in from pi-billboard) toggles min/max, keeps its
+// slot registry on globalThis and clears on shutdown.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -62,7 +64,7 @@ writeFileSync(
 );
 
 // Copy extension files
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "colors.ts", "retro.ts"])
+for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "colors.ts", "retro.ts"])
 	writeFileSync(join(SCRATCH, "extensions", part), readFileSync(join(ROOT, "extensions", part), "utf8"));
 
 const results = [];
@@ -303,6 +305,101 @@ const teleLine = widgetText(teleWidget);
 check("starship telemetry: TTFT", /ttft/.test(teleLine));
 check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
 check("starship telemetry: chevron-separated", teleLine.includes("▶"));
+
+// ── billboard (folded in from pi-billboard) ──
+// Driven through installBillboard directly: the panel owns a widget key, an
+// overlay and a slot registry, none of which the style/editor stubs supply.
+{
+	const { installBillboard } = await import(pathToFileURL(join(SCRATCH, "extensions/billboard.ts")).href);
+	const makeBoardPi = () => {
+		const handlers = new Map();
+		return {
+			handlers,
+			command: undefined,
+			shortcuts: new Map(),
+			on(ev, fn) { if (!handlers.has(ev)) handlers.set(ev, []); handlers.get(ev).push(fn); },
+			registerCommand(_n, spec) { this.command = spec; },
+			registerShortcut(key, spec) { this.shortcuts.set(key, spec); },
+			async fire(ev, e, c) { let out; for (const fn of handlers.get(ev) ?? []) out = (await fn(e, c)) ?? out; return out; },
+		};
+	};
+	const makeBoardUi = () => {
+		const overlays = [];
+		const widgetCalls = [];
+		const tui = { requestRender: () => {} };
+		return {
+			overlays, widgetCalls, tui, notes: [],
+			custom(factory, opts) {
+				const rec = { options: opts, closed: false };
+				return new Promise((resolve) => {
+					rec.done = (v) => { rec.closed = true; resolve(v); };
+					rec.component = factory(tui, {}, {}, rec.done);
+					overlays.push(rec);
+				});
+			},
+			setWidget(key, lines, opts) { widgetCalls.push({ key, lines, opts }); },
+			notify(msg, type) { this.notes.push({ msg, type }); },
+		};
+	};
+	const active = (ui) => [...ui.overlays].reverse().find((o) => !o.closed);
+	const lastW = (ui) => ui.widgetCalls[ui.widgetCalls.length - 1];
+
+	// min widget on session_start
+	const pi = makeBoardPi();
+	const bui = makeBoardUi();
+	installBillboard(pi);
+	await pi.fire("session_start", {}, { ui: bui });
+	const w0 = lastW(bui);
+	check("billboard widget is belowEditor, one line", w0?.key === "billboard" && w0.opts?.placement === "belowEditor" && w0.lines.length === 1);
+
+	// alt+p toggles max (overlay) and back
+	const sc = pi.shortcuts.get("alt+p");
+	check("billboard shortcut is alt+p", !!sc);
+	await sc.handler({ ui: bui });
+	const ov = active(bui);
+	check("alt+p opens a non-capturing overlay", !!ov && ov.options?.overlayOptions?.()?.nonCapturing === true);
+	check("max render is multi-line and names alt+p", ov.component.render(80).length > 1 && ov.component.render(80).some((l) => l.includes("alt+p")));
+	ov.component.handleInput("\x1b");
+	check("Esc closes back to min", !active(bui));
+
+	// title/items round trip, min + max
+	await pi.command.handler("title myproject", { ui: bui });
+	check("title lands in the min strip", lastW(bui).lines[0].includes("myproject"));
+	await pi.command.handler("add first task", { ui: bui });
+	await pi.command.handler("add second task", { ui: bui });
+	await sc.handler({ ui: bui });
+	const ov2 = active(bui);
+	check("items render in max", ov2.component.render(80).some((l) => l.includes("first task")));
+	await pi.command.handler("done 1", { ui: bui });
+	await pi.command.handler("clear", { ui: bui });
+	const cleared = ov2.component.render(80);
+	check("clear drops completed, keeps open", !cleared.some((l) => l.includes("first task")) && cleared.some((l) => l.includes("second task")));
+
+	// slot registry — gantt/launch register through globalThis
+	const api = globalThis.__billboard;
+	check("slot registry exposed on globalThis", typeof api?.register === "function");
+	api.register({ id: "stats", title: "stats", priority: 200, size: "card", render: () => ["cpu: 42%"] });
+	check("external card slot renders", ov2.component.render(80).some((l) => l.includes("cpu: 42%")));
+	api.register({ id: "branch", priority: 15, size: "row", render: () => ["branch: main"] });
+	await sc.handler({ ui: bui }); // → min
+	check("external row slot in min strip", lastW(bui).lines[0].includes("branch: main"));
+	await sc.handler({ ui: bui }); // → max
+	await pi.command.handler("hide stats", { ui: bui });
+	check("hidden slot suppressed", !ov2.component.render(80).some((l) => l.includes("cpu: 42%")));
+	await pi.command.handler("show stats", { ui: bui });
+	api.unregister("stats");
+	check("unregistered slot gone", !ov2.component.render(80).some((l) => l.includes("cpu: 42%")));
+
+	// turn counter — the strip only repaints in min mode, so drop out of max first
+	await sc.handler({ ui: bui });
+	await pi.fire("turn_end", {}, {});
+	await pi.fire("turn_end", {}, {});
+	check("turn count in min strip", (lastW(bui).lines[0] ?? "").includes("turn 2"));
+
+	// shutdown clears overlay, widget and the global
+	await pi.fire("session_shutdown", {}, {});
+	check("shutdown closes overlay + clears widget + registry", !active(bui) && lastW(bui)?.lines === undefined && globalThis.__billboard === undefined);
+}
 
 for (const line of results) console.log(line);
 rmSync(SCRATCH, { recursive: true, force: true });
