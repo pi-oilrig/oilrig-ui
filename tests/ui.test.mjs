@@ -27,6 +27,7 @@ writeFileSync(join(TUI, "utils.js"), `export const extractAnsiCode = () => null;
 mkdirSync(join(TUI, "word-navigation"), { recursive: true });
 writeFileSync(join(TUI, "word-navigation", "index.js"), `export const findWordBackward = () => 0; export const findWordForward = () => 0;`);
 writeFileSync(join(TUI, "word-navigation.js"), `export const findWordBackward = () => 0; export const findWordForward = () => 0;`);
+writeFileSync(join(TUI, "keys.js"), `export const decodePrintableKey = () => undefined;`);
 writeFileSync(join(TUI, "index.js"), `
 export const visibleWidth = (s) => String(s).replace(/\\x1b\\[[0-9;]*m/g, "").length;
 export const truncateToWidth = (s, w) => { const vis = String(s).replace(/\x1b\[[0-9;]*m/g, ""); return vis.length <= w ? String(s) : String(s).slice(0, w); };
@@ -46,8 +47,19 @@ for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) 
 }
 writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-test", type: "module", pi: {} }));
 
+// The history picker reads ~/.pi/agent/pi-history.jsonl at homedir(). Point HOME
+// at the scratch dir (before the extension is imported — HISTORY_DIR is computed
+// at module load) and seed it, so the picker test is deterministic.
+process.env.HOME = SCRATCH;
+mkdirSync(join(SCRATCH, ".pi", "agent"), { recursive: true });
+writeFileSync(
+	join(SCRATCH, ".pi", "agent", "pi-history.jsonl"),
+	["alpha one", "beta two", "gamma three"]
+		.map((text, i) => JSON.stringify({ text, ts: i })).join("\n") + "\n",
+);
+
 // Copy extension files
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "colors.ts"])
+for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "colors.ts", "retro.ts"])
 	writeFileSync(join(SCRATCH, "extensions", "ui", part), readFileSync(join(ROOT, "extensions", "ui", part), "utf8"));
 
 const results = [];
@@ -165,6 +177,40 @@ let cutThrew = false;
 try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
 check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");
 
+// ── history picker (regression: named its key handler handleKey, so pi's TUI —
+// which only ever calls handleInput — left it focused but deaf) ──
+let pickerFactory = null;
+editorCtx.ui.custom = async (factory) => { pickerFactory = factory; return null; };
+ed.setText("");
+const opened = ed.onExtensionShortcut("shift+up");
+await new Promise(r => setTimeout(r, 50));
+check("shift+up on empty editor opens the picker", opened === true && pickerFactory !== null);
+
+const picker = pickerFactory({}, editorCtx.ui.theme, {}, () => {});
+check("picker implements the Component contract", typeof picker.handleInput === "function" && typeof picker.render === "function" && typeof picker.invalidate === "function");
+check("picker lists history newest-first", picker.render(80).join("\n").includes("gamma three"));
+picker.handleInput("b");
+const filtered = picker.render(80).join("\n");
+check("typing filters the list", filtered.includes("beta two") && !filtered.includes("gamma three"));
+picker.handleInput("backspace");
+check("backspace restores the full list", picker.render(80).join("\n").includes("gamma three"));
+
+let escResult = "unset";
+const escPicker = pickerFactory({}, editorCtx.ui.theme, {}, (r) => { escResult = r; });
+escPicker.handleInput("escape");
+check("escape closes the picker", escResult === null);
+
+let enterResult = "unset";
+const enterPicker = pickerFactory({}, editorCtx.ui.theme, {}, (r) => { enterResult = r; });
+enterPicker.handleInput("e"); enterPicker.handleInput("t"); enterPicker.handleInput("a");
+enterPicker.handleInput("enter");
+check("enter returns the selected entry", enterResult === "beta two");
+
+const navPicker = pickerFactory({}, editorCtx.ui.theme, {}, () => {});
+const firstSelected = navPicker.render(60).findIndex((l) => l.startsWith("\u25b8"));
+navPicker.handleInput("down");
+check("down moves the selection", navPicker.render(60).findIndex((l) => l.startsWith("\u25b8")) === firstSelected + 1);
+
 // ── starship ──
 const themeStub = { fg: (k, t) => t };
 const widgetText = (content) => {
@@ -228,12 +274,12 @@ await sleep(70);
 await fire(stylePi, "message_update", {}, teleCtx);
 await fire(stylePi, "message_end", { message: usage }, teleCtx);
 const afterMsg = widgetText(teleWidget);
-check("starship renders after each message (message_end)", /TPS/.test(afterMsg) && /tok\/s/.test(afterMsg));
+check("starship renders after each message (message_end)", /tps/.test(afterMsg) && /tok\/s/.test(afterMsg));
 await fire(stylePi, "agent_end", { messages: [usage] }, teleCtx);
 const teleLine = widgetText(teleWidget);
-check("starship telemetry: TTFT", /TTFT/.test(teleLine));
+check("starship telemetry: TTFT", /ttft/.test(teleLine));
 check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
-check("starship telemetry: pipe-separated", teleLine.includes(" | "));
+check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 
 for (const line of results) console.log(line);
 const failed = results.filter((x) => x.startsWith("FAIL"));

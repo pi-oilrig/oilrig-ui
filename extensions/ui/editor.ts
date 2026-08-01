@@ -32,6 +32,10 @@ const requireTui = createRequire(import.meta.resolve("@earendil-works/pi-tui"));
 const { wordWrapLine } = requireTui("./components/editor.js") as any;
 const { extractAnsiCode, extractSegments } = requireTui("./utils.js") as any;
 const { findWordBackward, findWordForward } = requireTui("./word-navigation.js") as any;
+// keys.js exports it; the package index does not re-export it.
+const { decodePrintableKey } = requireTui("./keys.js") as {
+	decodePrintableKey: (data: string) => string | undefined;
+};
 
 type Pos = { line: number; col: number };
 type Row = {
@@ -400,42 +404,51 @@ class HistoryPicker {
 		this.filtered = [...this.entries];
 	}
 
-	handleKey(data: string): boolean {
-		if (!this.active) return false;
-		if (matchesKey(data, "escape") || matchesKey(data, "Escape") || matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+C")) {
+	// pi's TUI calls `handleInput` on the focused component and re-renders after
+	// it returns — nothing else. A component that names its key handler anything
+	// else is focused but deaf: keys fall through to the editor underneath, the
+	// list never repaints, escape never closes.
+	handleInput(data: string): void {
+		if (!this.active) return;
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 			this.active = false;
 			this.done(null);
-			return true;
+			return;
 		}
-		if (matchesKey(data, "enter") || matchesKey(data, "Return")) {
+		if (matchesKey(data, "enter")) {
 			this.active = false;
 			const result = this.filtered[this.selected];
 			this.done(result ? result.text : null);
-			return true;
+			return;
 		}
-		if (matchesKey(data, "up") || matchesKey(data, "ArrowUp")) {
+		if (matchesKey(data, "up")) {
 			this.selected = Math.max(0, this.selected - 1);
-			return true;
+			return;
 		}
-		if (matchesKey(data, "down") || matchesKey(data, "ArrowDown") || matchesKey(data, "Tab")) {
+		if (matchesKey(data, "down") || matchesKey(data, "tab")) {
 			this.selected = Math.min(this.filtered.length - 1, this.selected + 1);
-			return true;
+			return;
 		}
-		if (matchesKey(data, "backspace") || matchesKey(data, "Backspace")) {
-			this.query = this.query.slice(0, -1);
-			this.filtered = fuzzyFilter(this.query, this.entries, (e) => e.text);
-			this.selected = 0;
-			return true;
+		if (matchesKey(data, "backspace")) {
+			this.setQuery(this.query.slice(0, -1));
+			return;
 		}
-		// printable char
-		if (data.length === 1 && data.codePointAt(0)! >= 0x20) {
-			this.query += data;
-			this.filtered = fuzzyFilter(this.query, this.entries, (e) => e.text);
-			this.selected = 0;
-			return true;
-		}
-		return false;
+		// printable char — plain byte, or a CSI-u / modifyOtherKeys sequence when
+		// the kitty protocol is live (then a letter is not a 1-char string).
+		const printable =
+			data.length === 1 && data.codePointAt(0)! >= 0x20 ? data : decodePrintableKey(data);
+		if (printable) this.setQuery(this.query + printable);
 	}
+
+	private setQuery(next: string): void {
+		this.query = next;
+		this.filtered = next
+			? fuzzyFilter(next, this.entries, (e) => e.text)
+			: [...this.entries];
+		this.selected = 0;
+	}
+
+	invalidate(): void {}
 
 	render(width: number): string[] {
 		const lines: string[] = [];
