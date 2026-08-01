@@ -33,6 +33,7 @@ export const truncateToWidth = (s, w) => String(s).slice(0, w);
 export const CURSOR_MARKER = "\\x1b[7m";
 export const fuzzyFilter = (q, items, fn) => items.filter(i => fn(i).toLowerCase().includes(q.toLowerCase()));
 export const matchesKey = (data, key) => data === key;
+export const getKeybindings = () => ({ matches: () => false });
 export const sliceByColumn = (s, start, len) => s.slice(start, start + len);
 export const Key = { up: "up", down: "down", left: "left", right: "right", home: "home", end: "end", pageUp: "pageUp", pageDown: "pageDown" };
 `);

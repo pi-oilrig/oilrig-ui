@@ -9,7 +9,7 @@
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -147,7 +147,33 @@ function wrapFooter(ui: any): void {
 	ui.__statusLineWrapped = true;
 }
 
+const THEME_NAME = "terminal";
+
+function ensureTheme(): void {
+	const root = pkgRoot();
+	if (!root) return;
+	const pkgTheme = join(root, "themes", `${THEME_NAME}.json`);
+	if (!existsSync(pkgTheme)) return;
+
+	// Agent themes dir: PI_CODING_AGENT_DIR/themes or ~/.pi/agent/themes
+	const agentDir =
+		process.env.PI_CODING_AGENT_DIR ??
+		join(process.env.HOME || "/tmp", ".pi", "agent");
+	const themesDir = join(agentDir, "themes");
+	const dest = join(themesDir, `${THEME_NAME}.json`);
+	if (existsSync(dest)) return;
+
+	try {
+		mkdirSync(themesDir, { recursive: true });
+		copyFileSync(pkgTheme, dest);
+	} catch {
+		/* best-effort */
+	}
+}
+
 export function installChrome(ctx: any): void {
+	ensureTheme();
+
 	const ui = (ctx as any)?.ui;
 	if (!ui) return;
 

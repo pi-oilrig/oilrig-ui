@@ -15,6 +15,7 @@ import {
 import {
 	CURSOR_MARKER,
 	fuzzyFilter,
+	getKeybindings,
 	matchesKey,
 	sliceByColumn,
 	truncateToWidth,
@@ -523,7 +524,7 @@ class InputStack {
 		// After a short delay, stack them — the factory receives the real TUI
 		setTimeout(() => {
 			const theme = ctx.ui.theme;
-			const keybindings = ctx.ui.keybindings;
+			const keybindings = getKeybindings();
 			origSet((realTui: any, _theme: any, _kb: any) => {
 				const live = this.stackWithTui(realTui, theme, keybindings, factories);
 				if (live) {
