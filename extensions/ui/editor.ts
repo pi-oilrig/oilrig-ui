@@ -307,7 +307,8 @@ function installSelection(editor: any): void {
 			});
 		} catch (err) {
 			console.error("[pi-ui] selection render error:", (err as Error).message);
-			return origRender(width);
+			// Fallback: return the original render result without selection overlay
+			return [" ".repeat(width)];
 		}
 	};
 }
@@ -503,7 +504,7 @@ function installLeftBar(editor: any, theme: any): void {
 			return lines;
 		} catch (err) {
 			console.error("[pi-ui] leftBar render error:", (err as Error).message);
-			return origRender(width);
+			return [" ".repeat(width)];
 		}
 	};
 }
@@ -518,7 +519,7 @@ function installGanttBoard(editor: any): void {
 			return lines;
 		} catch (err) {
 			console.error("[pi-ui] ganttBoard render error:", (err as Error).message);
-			return origRender(width);
+			return [" ".repeat(width)];
 		}
 	};
 }
@@ -557,7 +558,7 @@ class InputStack {
 				// Fallback: bare CustomEditor with real TUI
 				const editorTheme = {
 					borderColor: (text: string) => theme.fg("borderMuted", text),
-					selectList: theme.selectList,
+					selectList: getSelectListTheme(),
 				};
 				const ed = new CustomEditor(realTui, editorTheme, keybindings);
 				installSelection(ed);

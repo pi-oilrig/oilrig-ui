@@ -16,7 +16,7 @@ Total: barWidth + width > terminal width.
 
 ### 2. Editor theme.selectList is undefined (CRITICAL — fixed)
 
-**File:** `extensions/ui/editor.ts` — `stackWithTui()`, line ~548
+**File:** `extensions/ui/editor.ts` — `stackWithTui()` and `absorb()` fallback
 
 **Error:** `TypeError: Cannot read properties of undefined (reading 'selectedText')`
 at `SelectList.renderItem` → `SelectList.render` → `Editor.render`
@@ -26,17 +26,35 @@ at `SelectList.renderItem` → `SelectList.render` → `Editor.render`
 SelectList.renderItem (select-list.js:104)
   at SelectList.render (select-list.js:54)
     at CustomEditor.render (editor.js:468)
-      at editor.render (editor.ts:290) installSelection wrapper
-        at editor.render (editor.ts:478) installLeftBar wrapper
-          at editor.render (editor.ts:497) installGanttBoard wrapper
+      at editor.render (editor.ts:310) installSelection wrapper
+        at editor.render (editor.ts:506) installLeftBar wrapper
+          at editor.render (editor.ts:521) installGanttBoard wrapper
 ```
 
 **Cause:** `editorTheme` was constructed as `{ borderColor, selectList: theme.selectList }`.
 The `Theme` class has no `selectList` property — it's `undefined`. The `SelectList`
 constructor receives `undefined` and crashes on `this.theme.selectedText()`.
+The bug existed in **both** `stackWithTui()` and the fallback path in `absorb()`.
 
 **Fix:** Use `getSelectListTheme()` from `@earendil-works/pi-coding-agent` instead of
-`theme.selectList`.
+`theme.selectList` in both code paths.
+
+### 2b. Catch-block recursion (CRITICAL — fixed)
+
+**File:** `extensions/ui/editor.ts` — all render wrapper catch blocks
+
+**Error:** After catching the SelectList crash, the catch blocks called
+`origRender(width)` (the inner render function) which threw the same error again,
+creating a cascading chain of caught errors that eventually escaped as an
+uncaught exception.
+
+**Call trace:**
+```
+ganttBoard catch → origRender (leftBar) → throw → leftBar catch → origRender (selection) → throw → selection catch → origRender (CustomEditor) → throw → UNCAUGHT
+```
+
+**Fix:** Return `[" ".repeat(width)]` (an empty line) in catch blocks instead of
+re-calling the failing render function.
 
 ### 3. ctx.ui.keybindings is undefined (CRITICAL — fixed)
 
