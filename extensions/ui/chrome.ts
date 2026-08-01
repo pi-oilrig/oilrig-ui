@@ -12,14 +12,7 @@ import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const RED = "\x1b[31m";
-const GREEN = "\x1b[32m";
-const YELLOW = "\x1b[33m";
-const BLUE = "\x1b[34m";
-const MAGENTA = "\x1b[35m";
-const CYAN = "\x1b[36m";
-const RESET = "\x1b[0m";
+import { BLUE, CYAN, GREEN, MAGENTA, RED, RESET, YELLOW } from "./colors.ts";
 
 const PALETTE = [CYAN, GREEN, YELLOW, BLUE, MAGENTA, RED];
 const MIN_GAP = 3;
@@ -27,6 +20,20 @@ const MIN_GAP = 3;
 const VOLATILE = new Set([
 	"watch", "toolband", "loop", "touches", "launch", "trunk", "ap",
 ]);
+
+// Known status keys: fixed icon + color + sort rank. Unknown keys fall back
+// to a hashed color, no icon, and sort after all known keys (rank 100).
+const META: Record<string, { icon: string; color: string; rank: number }> = {
+	kern: { icon: "◆", color: GREEN, rank: 0 },
+	ontology: { icon: "◇", color: MAGENTA, rank: 1 },
+	gantt: { icon: "⊞", color: CYAN, rank: 2 },
+	timeline: { icon: "◷", color: BLUE, rank: 3 },
+	rigor: { icon: "✓", color: YELLOW, rank: 4 },
+	pace: { icon: "▪", color: BLUE, rank: 5 },
+	hub: { icon: "⊙", color: CYAN, rank: 6 },
+};
+
+function rankOf(key: string): number { return META[key]?.rank ?? 100; }
 
 function pkgRoot(): string | null {
 	let dir: string | null;
@@ -81,14 +88,17 @@ function sanitize(text: string): string {
 
 function paintStatus(key: string, text: string): string {
 	const clean = sanitize(text);
-	if (clean.includes("\x1b[")) return clean;
-	return `${colorFor(key)}${clean}${RESET}`;
+	const meta = META[key];
+	const color = meta ? meta.color : colorFor(key);
+	const icon = meta ? `${meta.icon} ` : "";
+	if (clean.includes("\x1b[")) return `${color}${icon}${RESET}${clean}`;
+	return `${color}${icon}${clean}${RESET}`;
 }
 
 function buildStatusRows(statuses: Map<string, string>, width: number): string[] {
 	const cap = Math.max(20, Math.floor(width / 2));
 	const entries = Array.from(statuses.entries())
-		.sort(([a], [b]) => a.localeCompare(b))
+		.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b))
 		.filter(([key]) => !VOLATILE.has(key))
 		.map(([key, text]) => paintStatus(key, text))
 		.filter((s) => visibleWidth(s) > 0)

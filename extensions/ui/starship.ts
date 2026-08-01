@@ -1,5 +1,7 @@
 // Starship — single-line status widget below the editor.
-// Segments: model, tokens (↑in ↓out), kern ops, frontier cursor, git branch, session duration.
+// Segments: tokens (↑in ↓out), kern ops, frontier cursor, git branch,
+// session duration, cost. Model is intentionally omitted — pi renders it
+// on the native line above the input, so repeating it here is noise.
 // Renders via ctx.ui.setWidget with placement "belowEditor".
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -8,9 +10,9 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import { BLUE, CYAN, DIM, GREEN, MAGENTA, RESET, YELLOW } from "./colors.ts";
 
 const WIDGET_KEY = "starship";
-const STATUS_KEY = "starship";
 
 // ── frontier cursor (minimal parser, no cross-package dep) ─────────────────
 
@@ -98,16 +100,12 @@ export function installStarship(pi: ExtensionAPI): void {
 				}
 			} catch { /* session not ready */ }
 
-			const theme = ctx.ui.theme;
 			const segments: string[] = [];
 
-			const model = ctx.model?.id ?? "";
-			if (model) segments.push(theme.fg("accent", model));
-
 			const tok = input + output;
-			if (tok > 0) segments.push(theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)}`));
+			if (tok > 0) segments.push(`${CYAN}↑${fmt(input)} ↓${fmt(output)}${RESET}`);
 
-			if (kernCount > 0) segments.push(theme.fg("info", `kern ${kernCount}`));
+			if (kernCount > 0) segments.push(`${GREEN}◆ ${kernCount}${RESET}`);
 
 			const frontierDir = join(root, "frontier");
 			if (existsSync(frontierDir)) {
@@ -116,27 +114,26 @@ export function installStarship(pi: ExtensionAPI): void {
 					const parts = [`${c.done}/${c.total}`];
 					if (c.ready.length) parts.push(c.ready[0]!);
 					if (c.waiting.length) parts.push(`!${c.waiting.length}`);
-					segments.push(theme.fg("warning", `plan ${parts.join(" ")}`));
+					segments.push(`${YELLOW}◈ ${parts.join(" ")}${RESET}`);
 				}
 			}
 
 			const branch = gitBranch(root);
-			if (branch) segments.push(theme.fg("dim", branch));
+			if (branch) segments.push(`${MAGENTA}⎇ ${branch}${RESET}`);
 
 			const dur = Date.now() - sessionStart;
-			if (dur > 30000) segments.push(theme.fg("dim", sessionDuration(sessionStart)));
+			if (dur > 30000) segments.push(`${DIM}◷ ${sessionDuration(sessionStart)}${RESET}`);
 
-			if (cost > 0) segments.push(theme.fg("dim", `$${cost.toFixed(4)}`));
+			if (cost > 0) segments.push(`${BLUE}$${cost.toFixed(4)}${RESET}`);
 
 			if (segments.length === 0) return;
-			const line = segments.join(" · ");
+			const line = segments.join(`${DIM} · ${RESET}`);
 			if (line === lastFrame) return;
 			lastFrame = line;
 
 			const width = process.stdout.columns ?? 80;
 			const wrapped = truncateToWidth(` ${line} `, width);
 			ctx.ui.setWidget(WIDGET_KEY, [wrapped], { placement: "belowEditor" });
-			ctx.ui.setStatus(STATUS_KEY, theme.fg("dim", `starship ${model || ""} ${fmt(input + output)}`));
 		} catch (err) {
 			console.error("[pi-ui] starship render error:", (err as Error).message);
 		}

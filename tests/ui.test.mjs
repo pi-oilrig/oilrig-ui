@@ -45,7 +45,7 @@ for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) 
 writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-test", type: "module", pi: {} }));
 
 // Copy extension files
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts"])
+for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "colors.ts"])
 	writeFileSync(join(SCRATCH, "extensions", "ui", part), readFileSync(join(ROOT, "extensions", "ui", part), "utf8"));
 
 const results = [];
@@ -149,7 +149,7 @@ const starCtx = {
 	mode: "tui",
 	model: { id: "test-model" },
 	projectRoot: "/tmp",
-	sessionManager: { getBranch: () => [] },
+	sessionManager: { getBranch: () => [{ type: "message", message: { role: "assistant", usage: { input: 100, output: 50 } } }] },
 	ui: {
 		setEditorComponent: () => {},
 		setWidget: (...args) => { widgetSet = true; },
