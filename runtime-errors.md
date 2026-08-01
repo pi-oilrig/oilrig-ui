@@ -4,7 +4,7 @@
 
 ### 1. Editor top border overflow (CRITICAL — fixed)
 
-**File:** `extensions/ui/editor.ts` — `installLeftBar()`
+**File:** `extensions/editor.ts` — `installLeftBar()`
 
 **Error:** `Rendered line 6 exceeds terminal width (175 > 142)`
 
@@ -16,7 +16,7 @@ Total: barWidth + width > terminal width.
 
 ### 2. Editor theme.selectList is undefined (CRITICAL — fixed)
 
-**File:** `extensions/ui/editor.ts` — `stackWithTui()` and `absorb()` fallback
+**File:** `extensions/editor.ts` — `stackWithTui()` and `absorb()` fallback
 
 **Error:** `TypeError: Cannot read properties of undefined (reading 'selectedText')`
 at `SelectList.renderItem` → `SelectList.render` → `Editor.render`
@@ -41,7 +41,7 @@ The bug existed in **both** `stackWithTui()` and the fallback path in `absorb()`
 
 ### 2b. Catch-block recursion (CRITICAL — fixed)
 
-**File:** `extensions/ui/editor.ts` — all render wrapper catch blocks
+**File:** `extensions/editor.ts` — all render wrapper catch blocks
 
 **Error:** After catching the SelectList crash, the catch blocks called
 `origRender(width)` (the inner render function) which threw the same error again,
@@ -58,7 +58,7 @@ re-calling the failing render function.
 
 ### 3. ctx.ui.keybindings is undefined (CRITICAL — fixed)
 
-**File:** `extensions/ui/editor.ts` — `InputStack.absorb()`, line ~534
+**File:** `extensions/editor.ts` — `InputStack.absorb()`, line ~534
 
 **Error:** `TypeError: Cannot read properties of undefined (reading 'matches')`
 at `CustomEditor.handleInput`

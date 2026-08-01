@@ -17,7 +17,7 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SCRATCH = join(process.env.TMPDIR ?? "/tmp", `pi-ui-test-${process.pid}`);
 
 rmSync(SCRATCH, { recursive: true, force: true });
-mkdirSync(join(SCRATCH, "extensions", "ui"), { recursive: true });
+mkdirSync(join(SCRATCH, "extensions"), { recursive: true });
 
 const TUI = join(SCRATCH, "node_modules/@earendil-works/pi-tui");
 mkdirSync(TUI, { recursive: true });
@@ -63,7 +63,7 @@ writeFileSync(
 
 // Copy extension files
 for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "colors.ts", "retro.ts"])
-	writeFileSync(join(SCRATCH, "extensions", "ui", part), readFileSync(join(ROOT, "extensions", "ui", part), "utf8"));
+	writeFileSync(join(SCRATCH, "extensions", part), readFileSync(join(ROOT, "extensions", part), "utf8"));
 
 const results = [];
 const check = (name, cond, extra = "") => results.push(`${cond ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
@@ -85,7 +85,7 @@ const fire = async (pi, name, event, ctx) => {
 
 // ── style ──
 const stylePi = makePi();
-(await import(pathToFileURL(join(SCRATCH, "extensions/ui/index.ts")).href)).default(stylePi);
+(await import(pathToFileURL(join(SCRATCH, "extensions/index.ts")).href)).default(stylePi);
 
 let r = await fire(stylePi, "before_agent_start", { systemPrompt: "base" });
 check("style prompt appended", r?.systemPrompt?.includes("Output discipline"));
