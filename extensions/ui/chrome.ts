@@ -12,25 +12,28 @@ import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BLUE, CYAN, GREEN, MAGENTA, RED, RESET, YELLOW } from "./colors.ts";
+import { AMBER, CYAN, DIM, GREEN, MAGENTA, RED, RESET, ACTIVE, DONE, IDLE, V, H, TL, TR, BL, BR, chip, vw } from "./retro.ts";
 
-const PALETTE = [CYAN, GREEN, YELLOW, BLUE, MAGENTA, RED];
-const MIN_GAP = 3;
+// Retro palette: amber primary, green for active, dim for metadata
+const PALETTE = [CYAN, GREEN, AMBER, MAGENTA, RED];
+const MIN_GAP = 2;
 
+// Volatile keys: shown when active but filtered out of the steady-state status bar
 const VOLATILE = new Set([
-	"watch", "toolband", "loop", "touches", "launch", "trunk", "ap",
+	"watch", "toolband", "loop", "touches", "ap",
 ]);
 
-// Known status keys: fixed icon + color + sort rank. Unknown keys fall back
-// to a hashed color, no icon, and sort after all known keys (rank 100).
+// Known status keys: retro glyphs + amber-on-green palette, gantt first
 const META: Record<string, { icon: string; color: string; rank: number }> = {
-	kern: { icon: "◆", color: GREEN, rank: 0 },
-	ontology: { icon: "◇", color: MAGENTA, rank: 1 },
-	gantt: { icon: "⊞", color: CYAN, rank: 2 },
-	timeline: { icon: "◷", color: BLUE, rank: 3 },
-	rigor: { icon: "✓", color: YELLOW, rank: 4 },
-	pace: { icon: "▪", color: BLUE, rank: 5 },
-	hub: { icon: "⊙", color: CYAN, rank: 6 },
+	gantt: { icon: "\u25B6", color: AMBER, rank: 0 },
+	kern: { icon: "\u25C6", color: GREEN, rank: 1 },
+	hub: { icon: "\u2299", color: AMBER, rank: 2 },
+	ontology: { icon: "\u25C7", color: MAGENTA, rank: 3 },
+	timeline: { icon: "\u25F7", color: CYAN, rank: 4 },
+	rigor: { icon: "\u2713", color: GREEN, rank: 5 },
+	pace: { icon: "\u25AA", color: CYAN, rank: 6 },
+	launch: { icon: "\u2699", color: AMBER, rank: 7 },
+	trunk: { icon: "\u21BB", color: MAGENTA, rank: 8 },
 };
 
 function rankOf(key: string): number { return META[key]?.rank ?? 100; }
@@ -62,7 +65,7 @@ function pluginVersionTag(): string | null {
 	let mtime = 0;
 	try { mtime = statSync(refPath).mtimeMs; } catch {}
 	if (versionCache && versionCache.version === version && versionCache.refMtime === mtime) {
-		return versionCache.behind > 0 ? `${RED}v${version}!${RESET}` : `v${version}`;
+		return versionCache.behind > 0 ? `${RED}${version}!${RESET}` : `${AMBER}${version}${RESET}`;
 	}
 	let behind = 0;
 	try {
@@ -73,7 +76,7 @@ function pluginVersionTag(): string | null {
 		behind = Number(out) || 0;
 	} catch { behind = 0; }
 	versionCache = { version, refMtime: mtime, behind };
-	return behind > 0 ? `${RED}v${version}!${RESET}` : `v${version}`;
+	return behind > 0 ? `${RED}${version}!${RESET}` : `${AMBER}${version}${RESET}`;
 }
 
 function colorFor(key: string): string {
@@ -91,8 +94,11 @@ function paintStatus(key: string, text: string): string {
 	const meta = META[key];
 	const color = meta ? meta.color : colorFor(key);
 	const icon = meta ? `${meta.icon} ` : "";
-	if (clean.includes("\x1b[")) return `${color}${icon}${RESET}${clean}`;
-	return `${color}${icon}${clean}${RESET}`;
+	// Retro format: dim label ─ amber value with box-drawing
+	const inner = clean.includes("\x1b[")
+		? `${color}${icon}${RESET}${clean}`
+		: `${color}${icon}${clean}${RESET}`;
+	return `${DIM}${V}${RESET} ${inner}`;
 }
 
 function buildStatusRows(statuses: Map<string, string>, width: number): string[] {
@@ -101,30 +107,32 @@ function buildStatusRows(statuses: Map<string, string>, width: number): string[]
 		.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b))
 		.filter(([key]) => !VOLATILE.has(key))
 		.map(([key, text]) => paintStatus(key, text))
-		.filter((s) => visibleWidth(s) > 0)
-		.map((s) => (visibleWidth(s) > cap ? truncateToWidth(s, cap, "…") : s));
+		.filter((s) => vw(s) > 0)
+		.map((s) => (vw(s) > cap ? truncateToWidth(s, cap, "…") : s));
 	const rows: string[][] = [];
 	let row: string[] = [];
 	let used = 0;
+	// Account for retro box border: │ prefix + space = 2 chars
+	const innerWidth = width - 2;
 	for (const entry of entries) {
-		const w = visibleWidth(entry);
-		if (row.length && used + MIN_GAP + w > width) { rows.push(row); row = []; used = 0; }
+		const w = vw(entry);
+		if (row.length && used + MIN_GAP + w > innerWidth) { rows.push(row); row = []; used = 0; }
 		used += row.length ? MIN_GAP + w : w;
 		row.push(entry);
 	}
 	if (row.length) rows.push(row);
 	return rows.map((r) => {
-		if (r.length < 2) return truncateToWidth(r[0] ?? "", width, "…");
-		const content = r.reduce((sum, e) => sum + visibleWidth(e), 0);
+		if (r.length < 2) return `${DIM}${V}${RESET} ${truncateToWidth(r[0] ?? "", width - 4, "…")} ${DIM}${V}${RESET}`;
+		const content = r.reduce((sum, e) => sum + vw(e), 0);
 		const gaps = r.length - 1;
-		let spare = Math.max(gaps * MIN_GAP, width - content);
-		let line = r[0];
+		let spare = Math.max(gaps * MIN_GAP, innerWidth - content);
+		let line = `${DIM}${V}${RESET} ${r[0]}`;
 		for (let i = 1; i < r.length; i++) {
 			const pad = Math.ceil(spare / (gaps - i + 1));
 			line += " ".repeat(pad) + r[i];
 			spare -= pad;
 		}
-		return truncateToWidth(line, width, "…");
+		return `${line} ${DIM}${V}${RESET}`;
 	});
 }
 
@@ -139,17 +147,25 @@ function wrapFooter(ui: any): void {
 			if (!origRender) return comp;
 			comp.render = (width: number): string[] => {
 				const lines = origRender(width);
+				// Retro box-drawing top border
+				const retro = [`${DIM}${TL}${H.repeat(Math.max(0, width - 2))}${TR}${RESET}`];
 				try {
 					const tag = pluginVersionTag();
 					if (tag && lines.length > 0)
-						lines[0] = truncateToWidth(`${tag} ${lines[0]}`, width, "…");
+						retro.push(`${DIM}${V}${RESET} ${truncateToWidth(`${tag} ${lines[0]}`, width - 4, "…")} ${DIM}${V}${RESET}`);
+					else if (lines.length > 0)
+						retro.push(`${DIM}${V}${RESET} ${truncateToWidth(lines[0], width - 4, "…")} ${DIM}${V}${RESET}`);
 				} catch { /* best-effort */ }
 				try {
 					const statuses = footerData?.getExtensionStatuses?.();
-					if (width > 0 && statuses && statuses.size > 0 && lines.length > 2)
-						return [...lines.slice(0, 2), ...buildStatusRows(statuses, width)];
+					if (width > 0 && statuses && statuses.size > 0) {
+						const rows = buildStatusRows(statuses, width);
+						retro.push(...rows);
+					}
 				} catch { /* keep open-tui's lines on surprise */ }
-				return lines;
+				// Bottom border
+				retro.push(`${DIM}${BL}${H.repeat(Math.max(0, width - 2))}${BR}${RESET}`);
+				return retro;
 			};
 			return comp;
 		});

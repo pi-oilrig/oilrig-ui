@@ -11,7 +11,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const SCRATCH = join(process.env.TMPDIR ?? "/tmp", "pi-ui-test");
+// Per-process scratch: a fixed path collides when two runs overlap (the probe
+// running every package's tests while a bare `npm test` is open), and the stale
+// pi-history.jsonl makes the picker assertions fail nondeterministically.
+const SCRATCH = join(process.env.TMPDIR ?? "/tmp", `pi-ui-test-${process.pid}`);
 
 rmSync(SCRATCH, { recursive: true, force: true });
 mkdirSync(join(SCRATCH, "extensions", "ui"), { recursive: true });
@@ -183,7 +186,11 @@ let pickerFactory = null;
 editorCtx.ui.custom = async (factory) => { pickerFactory = factory; return null; };
 ed.setText("");
 const opened = ed.onExtensionShortcut("shift+up");
-await new Promise(r => setTimeout(r, 50));
+// Poll, don't sleep: ui.custom is awaited inside the shortcut handler, so the
+// factory lands a microtask-plus later. A fixed delay loses the race whenever
+// the box is loaded (e.g. the probe running every package's tests at once).
+for (let i = 0; i < 200 && pickerFactory === null; i++)
+	await new Promise(r => setTimeout(r, 10));
 check("shift+up on empty editor opens the picker", opened === true && pickerFactory !== null);
 
 const picker = pickerFactory({}, editorCtx.ui.theme, {}, () => {});
@@ -282,6 +289,7 @@ check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
 check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 
 for (const line of results) console.log(line);
+rmSync(SCRATCH, { recursive: true, force: true });
 const failed = results.filter((x) => x.startsWith("FAIL"));
 if (failed.length) { console.error(`\n${failed.length} check(s) failed`); process.exit(1); }
 console.log("\nall ui checks passed");
