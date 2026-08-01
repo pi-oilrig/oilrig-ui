@@ -495,23 +495,83 @@ async function openHistoryPicker(ctx: any, editor: any): Promise<void> {
 
 // ── left bar ───────────────────────────────────────────────────────────────
 
+// The prompt arrives framed twice: pi's base editor draws full-width `─`
+// rules, and a stacked layer may wrap that in a rounded box (`╭─╮`, `│` rails,
+// `╰─╯`). Replace all of it with one fat bar down the left edge — rule lines
+// and box caps dropped (scroll labels like `↑ 2 more` survive), side rails
+// peeled, every remaining line prefixed. The bar paints with the live editor's
+// borderColor so pi's recoloring (bash mode, thinking accents) lands on it.
+const BAR = "▌";
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+const plainText = (line: string): string => line.replace(ANSI_RE, "");
+
+function isRule(line: string): boolean {
+	const plain = plainText(line).trim();
+	if (!plain) return false;
+	for (const ch of plain) if (ch !== "─") return false;
+	return true;
+}
+
+function frameCap(line: string): { label?: string } | null {
+	const plain = plainText(line).trim();
+	if (plain.length < 2) return null;
+	const first = plain[0];
+	const last = plain[plain.length - 1];
+	if ((first !== "╭" && first !== "╰") || (last !== "╮" && last !== "╯"))
+		return null;
+	const m = plain.match(/[↑↓]\s+\d+\s+more/);
+	return m ? { label: m[0] } : {};
+}
+
+function stripRails(line: string): string | null {
+	const plain = plainText(line);
+	if (!plain.startsWith("│") || !plain.trimEnd().endsWith("│")) return null;
+	const first = line.indexOf("│");
+	const last = line.lastIndexOf("│");
+	if (last <= first) return null;
+	let inner = line
+		.slice(first + 1, last)
+		.replace(/^\x1b\[[0-9;]*m/, "")
+		.replace(/\x1b\[[0-9;]*m$/, "");
+	if (inner.startsWith(" ")) inner = inner.slice(1);
+	if (inner.endsWith(" ")) inner = inner.slice(0, -1);
+	return inner;
+}
+
 function installLeftBar(editor: any, theme: any): void {
 	const origRender = editor.render.bind(editor);
-	editor.render = (width: number) => {
+	const fallback = (s: string) =>
+		typeof theme?.borderColor === "function"
+			? theme.borderColor(s)
+			: typeof theme?.fg === "function"
+				? theme.fg("borderMuted", s)
+				: s;
+	editor.render = (width: number): string[] => {
 		try {
-			const lines = origRender(width);
-			if (lines.length === 0) return lines;
-			const model = editor.__ctx?.model?.id ?? "";
-			const thinking = editor.__ctx?.thinkingLevel ?? "high";
-			const label = model ? `${model} ${thinking}` : "";
-			if (!label) return lines;
-			const bar = ` ${theme.fg("dim", label)} `;
-			const barWidth = visibleWidth(bar);
-			lines[0] = `${bar}${truncateToWidth(lines[0], Math.max(0, width - barWidth), "")}`;
-			return lines;
+			const paint =
+				typeof editor.borderColor === "function"
+					? editor.borderColor
+					: typeof editor.theme?.borderColor === "function"
+						? editor.theme.borderColor
+						: fallback;
+			const prefix = paint(BAR) + " ";
+			const lines = origRender(Math.max(1, width - 2));
+			const out: string[] = [];
+			for (const line of lines) {
+				if (isRule(line)) continue;
+				const cap = frameCap(line);
+				if (cap) {
+					if (cap.label) out.push(prefix + paint(`─── ${cap.label}`));
+					continue;
+				}
+				const inner = stripRails(line);
+				out.push(prefix + (inner ?? line));
+			}
+			return out;
 		} catch (err) {
 			console.error("[pi-ui] leftBar render error:", (err as Error).message);
-			return [" ".repeat(width)];
+			return origRender(width);
 		}
 	};
 }

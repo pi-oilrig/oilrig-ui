@@ -158,6 +158,7 @@ catch { threw = true; }
 check("shift+select extends without throwing", !threw && handled === true);
 check("shift+select requests a render", rendered > 0);
 check("selection is highlighted", ed.render(80).join("\n").includes("\x1b[7m"));
+check("left bar prefixes every line", ed.render(80).every((l) => l.startsWith("▌")));
 let cutThrew = false;
 try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
 check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");
