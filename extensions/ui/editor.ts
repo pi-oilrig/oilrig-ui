@@ -518,37 +518,50 @@ class InputStack {
 			factories.push(fn);
 		};
 
-		// After a short delay, stack them
+		// After a short delay, stack them — the factory receives the real TUI
 		setTimeout(() => {
-			const live = this.stack(ctx, factories, origSet);
-			if (live) {
-				// Attach context for left bar
-				live.__ctx = ctx;
-				origSet(() => live);
-			}
+			const theme = ctx.ui.theme;
+			const keybindings = ctx.ui.keybindings;
+			origSet((realTui: any, _theme: any, _kb: any) => {
+				const live = this.stackWithTui(realTui, theme, keybindings, factories);
+				if (live) {
+					live.__ctx = ctx;
+					return live;
+				}
+				// Fallback: bare CustomEditor with real TUI
+				const editorTheme = {
+					borderColor: (text: string) => theme.fg("borderMuted", text),
+					selectList: theme.selectList,
+				};
+				const ed = new CustomEditor(realTui, editorTheme, keybindings);
+				installSelection(ed);
+				installHistory(ed, () => this.ctx);
+				installLeftBar(ed, theme);
+				installGanttBoard(ed);
+				ed.__ctx = ctx;
+				return ed;
+			});
 		}, 100);
 	}
 
-	private stack(ctx: any, factories: Factory[], origSet: (fn: Factory) => void): any {
-		const tui = ctx.ui;
-		const theme = ctx.ui.theme;
-		const keybindings = ctx.ui.keybindings;
+	private stackWithTui(realTui: any, theme: any, keybindings: any, factories: Factory[]): any {
+		const editorTheme = {
+			borderColor: (text: string) => theme.fg("borderMuted", text),
+			selectList: theme.selectList,
+		};
 
 		let live: any = null;
 		let liveIdx = -1;
 		const probes: any[] = [];
 
-		// Try each factory, skip base if subclassed
 		for (let i = 0; i < factories.length; i++) {
 			try {
-				const ed = factories[i](tui, theme, keybindings);
+				const ed = factories[i](realTui, editorTheme, keybindings);
 				if (!ed) continue;
 				probes.push(ed);
 				if (!live) { live = ed; liveIdx = i; }
-				// Check if this is a subclass of a previous one
 				if (live && ed !== live && Object.getPrototypeOf(ed) instanceof CustomEditor) {
 					this.stacked = true;
-					// Re-parent prototype chain
 					const proto = Object.getPrototypeOf(ed);
 					Object.setPrototypeOf(proto, Object.getPrototypeOf(live));
 					live = ed;
@@ -559,18 +572,16 @@ class InputStack {
 			}
 		}
 
-		if (!live) live = new CustomEditor(tui, theme, keybindings);
-
-		// Install features
-		installSelection(live);
-		installHistory(live, () => this.ctx);
-		installLeftBar(live, theme);
-		installGanttBoard(live);
-
-		this.layers = probes.map((p, i) =>
-			p ? `${p.constructor?.name ?? "?"}${i === liveIdx ? " (live)" : ""}` : "failed");
-		live.__editorStack = { layers: this.layers, stacked: this.stacked, notes: this.notes };
-		return live;
+		if (live) {
+			installSelection(live);
+			installHistory(live, () => this.ctx);
+			installLeftBar(live, theme);
+			installGanttBoard(live);
+			this.layers = probes.map((p, i) =>
+				p ? `${p.constructor?.name ?? "?"}${i === liveIdx ? " (live)" : ""}` : "failed");
+			live.__editorStack = { layers: this.layers, stacked: this.stacked, notes: this.notes };
+		}
+		return live ?? null;
 	}
 
 	describe(): string {
