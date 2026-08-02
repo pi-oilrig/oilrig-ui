@@ -20,6 +20,9 @@ const SCRATCH = join(process.env.TMPDIR ?? "/tmp", `pi-ui-test-${process.pid}`);
 
 rmSync(SCRATCH, { recursive: true, force: true });
 mkdirSync(join(SCRATCH, "extensions"), { recursive: true });
+mkdirSync(join(SCRATCH, "node_modules/typebox"), { recursive: true });
+writeFileSync(join(SCRATCH, "node_modules/typebox/package.json"), JSON.stringify({ name: "typebox", version: "0.0.0", type: "module", main: "index.js" }));
+writeFileSync(join(SCRATCH, "node_modules/typebox/index.js"), "const mk = () => ({});\nexport const Type = new Proxy({}, { get: () => mk });\n");
 
 const TUI = join(SCRATCH, "node_modules/@earendil-works/pi-tui");
 mkdirSync(TUI, { recursive: true });
@@ -41,7 +44,9 @@ export const fuzzyFilter = (items, q, fn) => items.filter(i => fn(i).toLowerCase
 export const matchesKey = (data, key) => data === key;
 export const getKeybindings = () => ({ matches: () => false });
 export const sliceByColumn = (s, start, len) => s.slice(start, start + len);
-export const Key = { up: "up", down: "down", left: "left", right: "right", home: "home", end: "end", pageUp: "pageUp", pageDown: "pageDown" };
+export const Key = { up: "up", down: "down", left: "left", right: "right", home: "home", end: "end", pageUp: "pageUp", pageDown: "pageDown", escape: "escape", enter: "enter", tab: "tab", shift: (k) => "shift+" + k };
+export const wrapTextWithAnsi = (s, w) => { const out = []; let t = String(s); if (!t) return [""]; while (t.length > w) { out.push(t.slice(0, w)); t = t.slice(w); } out.push(t); return out; };
+export class Editor { constructor(tui, theme){ this.tui = tui; this.theme = theme; this._t = ""; } setText(t){ this._t = String(t); } getText(){ return this._t; } handleInput(d){ if (d === "backspace") this._t = this._t.slice(0, -1); else this._t += d; } render(w){ return [this._t || " "]; } }
 export class Text { constructor(t){ this._t = t; } render(w){ return [String(this._t)]; } }
 export class Container { constructor(){ this._c = []; } addChild(c){ this._c.push(c); } render(w){ return this._c.flatMap(x => (x && x.render) ? x.render(w) : []); } }
 `);
@@ -64,7 +69,7 @@ writeFileSync(
 );
 
 // Copy extension files
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "colors.ts", "retro.ts"])
+for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "questionnaire.ts", "colors.ts", "retro.ts"])
 	writeFileSync(join(SCRATCH, "extensions", part), readFileSync(join(ROOT, "extensions", part), "utf8"));
 
 const results = [];
@@ -74,7 +79,7 @@ const fg = (style, text) => text; // stub returns text
 const makePi = () => {
 	const handlers = new Map();
 	const commands = new Map();
-	return { handlers, commands, on(name, fn) { if (!handlers.has(name)) handlers.set(name, []); handlers.get(name).push(fn); }, registerCommand(name, def) { commands.set(name, def); } };
+	return { handlers, commands, tools: new Map(), on(name, fn) { if (!handlers.has(name)) handlers.set(name, []); handlers.get(name).push(fn); }, registerCommand(name, def) { commands.set(name, def); }, registerTool(def) { this.tools.set(def.name, def); } };
 };
 const fire = async (pi, name, event, ctx) => {
 	let last;
@@ -399,6 +404,129 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	// shutdown clears overlay, widget and the global
 	await pi.fire("session_shutdown", {}, {});
 	check("shutdown closes overlay + clears widget + registry", !active(bui) && lastW(bui)?.lines === undefined && globalThis.__billboard === undefined);
+}
+
+// ── questionnaire ──
+// Driven through the registered tool: the overlay is a ui.custom component, so
+// each case opens it, feeds keys, and awaits the tool's own return value.
+{
+	const { installQuestionnaire } = await import(pathToFileURL(join(SCRATCH, "extensions/questionnaire.ts")).href);
+	const qPi = makePi();
+	installQuestionnaire(qPi);
+	const tool = qPi.tools.get("questionnaire");
+	check("questionnaire tool registered", !!tool && typeof tool.execute === "function");
+
+	const makeCtx = () => {
+		const live = { component: null, done: null };
+		return {
+			mode: "tui",
+			live,
+			ui: {
+				custom(factory) {
+					return new Promise((resolve) => {
+						live.done = resolve;
+						live.component = factory({ requestRender: () => {} }, { fg: (_k, t) => t, bg: (_k, t) => t, bold: (t) => t }, {}, resolve);
+					});
+				},
+			},
+		};
+	};
+	const ask = (questions) => {
+		const ctx = makeCtx();
+		const p = tool.execute("id", { questions }, null, null, ctx);
+		return { ctx, p, feed: (...keys) => { for (const k of keys) ctx.live.component.handleInput(k); }, view: () => ctx.live.component.render(72).join("\n") };
+	};
+	const one = [{ id: "scope", prompt: "How far?", options: [
+		{ value: "small", label: "Small slice" },
+		{ value: "whole", label: "Whole feature", description: "more risk", recommended: true },
+	] }];
+
+	// non-TUI refuses rather than hanging
+	const headless = await tool.execute("id", { questions: one }, null, null, { mode: "print" });
+	check("non-TUI mode bails, cancelled", headless.details.cancelled === true && /needs the TUI/.test(headless.content[0].text));
+
+	// recommendation is starred and pre-selected
+	let s = ask(one);
+	const first = s.view();
+	check("recommendation is starred", first.includes("★") && first.includes("Whole feature"));
+	check("recommendation is pre-selected", first.split("\n").some((l) => l.startsWith("> ") && l.includes("Whole feature")));
+	check("free-text option offered by default", first.includes("Write your own"));
+	s.feed("enter");
+	let out = await s.p;
+	check("enter answers with the recommendation", out.details.answers[0].value === "whole" && out.details.answers[0].mode === "picked" && out.details.answers[0].wasRecommended === true);
+	check("result text names the recommendation", /your recommendation/.test(out.content[0].text));
+
+	// c copies the highlighted option into an editable draft → enter ADDS it
+	s = ask(one);
+	s.feed("c");
+	check("c prefills the draft with the option text", s.view().includes("rewriting: Whole feature") && s.view().includes("Whole feature"));
+	s.feed(" but staged");
+	s.feed("enter");
+	out = await s.p;
+	let a = out.details.answers[0];
+	check("enter in draft adds a new option and answers with it", a.mode === "added" && a.label === "Whole feature but staged" && a.basedOn === "whole");
+	check("added answer is reported as based on the original", /added their own option based on "whole"/.test(out.content[0].text));
+
+	// ctrl+s REPLACES the original instead
+	s = ask(one);
+	s.feed("c", " trimmed", "ctrl+s");
+	out = await s.p;
+	a = out.details.answers[0];
+	check("ctrl+s replaces the original option", a.mode === "replaced" && a.label === "Whole feature trimmed" && a.basedOn === "whole");
+
+	// the added option survives in the list, the original beside it
+	s = ask(one);
+	s.feed("c", " plus", "enter");
+	await s.p;
+	s = ask(one);
+	check("a fresh ask starts from the agent's options again", !s.view().includes("plus"));
+	s.feed("escape");
+	out = await s.p;
+	check("escape cancels", out.details.cancelled === true && /cancelled/i.test(out.content[0].text));
+
+	// free-text option with no source option
+	s = ask(one);
+	s.feed("down", "down", "enter");
+	check("free-text option opens an empty draft", s.view().includes("your own answer:"));
+	s.feed("neither", "enter");
+	out = await s.p;
+	check("free text answers as wrote", out.details.answers[0].mode === "wrote" && out.details.answers[0].value === "neither");
+
+	// multi-question: tab bar, auto-advance, submit tab
+	const two = [
+		{ id: "scope", label: "Scope", prompt: "How far?", options: [{ value: "small", label: "Small" }, { value: "big", label: "Big", recommended: true }] },
+		{ id: "when", label: "When", prompt: "When?", options: [{ value: "now", label: "Now", recommended: true }, { value: "later", label: "Later" }] },
+	];
+	s = ask(two);
+	check("multi shows a tab bar", s.view().includes("Scope") && s.view().includes("When") && s.view().includes("submit"));
+	s.feed("enter");
+	check("answering advances to the next question", s.view().includes("When?"));
+	s.feed("down", "enter");
+	const summary = s.view();
+	check("last answer lands on the submit tab", summary.includes("ready to submit") && summary.includes("Later"));
+	s.feed("enter");
+	out = await s.p;
+	check("submit returns both answers in order", out.details.answers.map((x) => x.value).join(",") === "big,later");
+	check("result text is one line per question", out.content[0].text.split("\n").length === 2 && /^Scope: /.test(out.content[0].text));
+
+	// tab navigation and re-answering
+	s = ask(two);
+	s.feed("tab");
+	check("tab moves to the next question", s.view().includes("When?"));
+	s.feed("shift+tab");
+	check("shift+tab moves back", s.view().includes("How far?"));
+	s.feed("escape");
+	out = await s.p;
+	check("escape cancels a multi-question run", out.details.cancelled === true);
+
+	// unanswered questions block submit
+	s = ask(two);
+	s.feed("tab", "tab");
+	check("submit tab warns about unanswered questions", s.view().includes("unanswered:"));
+	s.feed("enter");
+	check("enter does not submit while unanswered", s.ctx.live.component !== null && s.view().includes("unanswered:"));
+	s.feed("escape");
+	await s.p;
 }
 
 for (const line of results) console.log(line);

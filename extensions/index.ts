@@ -11,6 +11,7 @@ import { installChrome } from "./chrome.ts";
 import { installEditor } from "./editor.ts";
 import { installStarship } from "./starship.ts";
 import { installBillboard } from "./billboard.ts";
+import { installQuestionnaire } from "./questionnaire.ts";
 
 export default function (pi: ExtensionAPI) {
 	// Style prompt — terse+ADHD on every turn, subagent injection, reminder
@@ -25,6 +26,10 @@ export default function (pi: ExtensionAPI) {
 	// Billboard — info panel: min strip in the widget, overlay on alt+p,
 	// slot registry on globalThis.__billboard for gantt/launch
 	installBillboard(pi);
+
+	// Questionnaire — the agent asks, the user picks or rewrites (`c`), in an
+	// overlay over the editor slot
+	installQuestionnaire(pi);
 
 	// Chrome wraps — header/footer suppression, status line, version tag
 	// Must be last so it wraps whatever footer the editor installs
