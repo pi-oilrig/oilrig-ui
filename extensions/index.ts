@@ -21,7 +21,7 @@ export default function (pi: ExtensionAPI) {
 	installEditor(pi);
 
 	// Billboard — the one info surface: min strip in the belowEditor widget,
-	// max overlay on alt+l, slot registry on globalThis.__billboard. Installed
+	// max overlay on f2, slot registry on globalThis.__billboard. Installed
 	// before its own slot providers so they register directly rather than
 	// through the pending queue.
 	installBillboard(pi);
