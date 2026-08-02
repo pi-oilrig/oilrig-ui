@@ -468,10 +468,10 @@ export function installBillboard(pi: ExtensionAPI): void {
 		list() {
 			return [...registry.values()];
 		},
-		repaint: () => {
-			lastContent = null;
-			repaint();
-		},
+		// Slot bodies are re-rendered on every repaint and the result is compared,
+		// so this does NOT bust the cache: launch ticks every 2s and until every
+		// 5s, and an unchanged frame must not cost a setWidget.
+		repaint,
 		open(focusId) {
 			if (state.mode !== "max") toggle();
 			if (focusId && registry.has(focusId)) setFocus(focusId);

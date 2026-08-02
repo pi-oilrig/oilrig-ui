@@ -487,6 +487,15 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	api.unregister("tall");
 	ov5.component.handleInput("\x1b");
 
+	// An unchanged frame must not cost a setWidget — launch ticks every 2s and
+	// until every 5s through this same entry point.
+	{
+		const n = bui.widgetCalls.length;
+		api.repaint();
+		api.repaint();
+		check("an unchanged repaint does not touch the widget", bui.widgetCalls.length === n);
+	}
+
 	// turn counter — the strip only repaints in min mode
 	await pi.fire("turn_end", {}, {});
 	await pi.fire("turn_end", {}, {});
