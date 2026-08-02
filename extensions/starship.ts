@@ -124,7 +124,7 @@ export function installStarship(pi: ExtensionAPI): void {
 	registerSlot({
 		id: SLOT_ID,
 		title: "session",
-		priority: 1,
+		priority: 70,
 		size: "row",
 		row: () => [rowLine()],
 		render: () => cardLines(),

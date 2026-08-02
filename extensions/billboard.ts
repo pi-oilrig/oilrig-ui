@@ -87,28 +87,111 @@ interface State {
 	scroll: number;
 }
 
-// ── width helpers (ANSI-aware: escapes cost no columns) ────────────
+// ── width helpers ──────────────────────────────────────────────────
+// The panel is monochrome by decree: one white on the terminal's own
+// background, no per-slot palette. Seven packages each shipped their own
+// colour scheme (amber gantt badges, green launch glyphs, red rigor, cyan
+// watch, magenta pins) and stacked together they read as confetti, not as
+// information. Structure now carries the meaning — glyphs, indentation,
+// section headings, the focus caret — and every slot's SGR codes are stripped
+// on the way in. Bold is the one exception: it is weight, not colour.
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+// Non-global twin: `.test()` on a /g regex carries lastIndex between calls and
+// silently alternates true/false on the same input.
+const ANSI_ONE = /\x1b\[[0-9;]*m/;
+const WHITE = "\x1b[97m";
+const RESET = "\x1b[0m";
+const BOLD = "\x1b[1m";
 
 function visible(s: string): number {
 	return s.replace(ANSI_RE, "").length;
 }
 
-function truncate(s: string, max: number): string {
-	if (max <= 0) return "";
-	if (visible(s) <= max) return s;
-	let out = 0;
-	let i = 0;
-	while (i < s.length && out < max - 1) {
-		const m = s.slice(i).match(ANSI_RE);
-		if (m && m.index === 0) {
-			i += m[0].length;
-			continue;
+// The one place anything is shortened: a built-in slot quoting the user's last
+// message back at them. Slot bodies wrap, they never clip.
+function clip(s: string, max: number): string {
+	const plain = mono(s).replace(ANSI_RE, "");
+	return plain.length <= max ? plain : `${plain.slice(0, max - 1)}…`;
+}
+
+// Every byte a slot renders passes through here. Colour is dropped; the SGR
+// attributes that carry *structure* survive, because they are not colour and
+// the panel would lose meaning without them: bold (1) is a heading, inverse
+// (7) is the timeline's cursor row and gantt's mode badge, strike (9) is a
+// completed item. Dim (2) goes with the colours — it is a second brightness,
+// and the panel has one.
+const KEEP_SGR = new Set(["0", "1", "7", "9", "22", "27", "29"]);
+
+// Any escape sequence, not just SGR: a slot that emits a cursor move or an OSC
+// title would otherwise survive the SGR filter and corrupt the frame.
+// eslint-disable-next-line no-control-regex
+const ESC_ANY = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[A-Za-z]|\x1b[@-Z\\-_]/g;
+// Control characters to drop — ESC (\x1b) is deliberately *not* in the class.
+// It was, once, and it ate the ESC off the very sequences the filter above had
+// just decided to keep, leaving the literal text `[0m` in the strip.
+// eslint-disable-next-line no-control-regex
+const CTRL = /[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]/g;
+
+function mono(s: string): string {
+	return String(s)
+		.replace(ESC_ANY, (seq) => {
+			if (!seq.endsWith("m") || seq[1] !== "[") return "";
+			const params = seq.slice(2, -1).split(";").filter((p) => KEEP_SGR.has(p));
+			if (!params.length) return "";
+			// A slot's own reset closes its attributes — and, left alone, the
+			// panel's white with them, so everything after it on the line falls
+			// back to the terminal default. Re-assert white immediately: the
+			// reset means "end my bold", never "end the panel".
+			const esc = `\x1b[${params.join(";")}m`;
+			return params.includes("0") ? `${esc}${WHITE}` : esc;
+		})
+		.replace(/\t/g, "  ")
+		.replace(CTRL, "")
+		// a lone ESC with nothing valid after it is not ours — drop it
+		.replace(/\x1b(?!\[)/g, "");
+}
+
+// Word-wrap to `width` visible columns, keeping the line's own leading indent
+// on every continuation so a wrapped job block still reads as one block. A
+// word longer than the width (a path, a URL) is hard-split rather than left to
+// overflow — nothing is ever truncated, because the point of the panel is to
+// show it all. Width is counted in visible columns: the SGR attributes mono()
+// let through cost none.
+function wrap(s: string, width: number): string[] {
+	if (width <= 0) return [s];
+	if (visible(s) <= width) return [s];
+	const indent = (s.match(/^\s*/)?.[0] ?? "").slice(0, Math.max(0, width - 8));
+	const hang = `${indent}  `;
+	const lines: string[] = [];
+	let cur = "";
+	let lead = indent;
+	const flush = () => {
+		if (cur) lines.push(lead + cur);
+		cur = "";
+		lead = hang;
+	};
+	for (let word of s.trim().split(/\s+/)) {
+		// A single word wider than the line: cut it at the column budget. Only
+		// plain words are cut — cutting inside an escape sequence would emit
+		// garbage, and a styled word that long does not occur.
+		while (visible(word) > width - lead.length && !ANSI_ONE.test(word)) {
+			const room = width - lead.length - (cur ? cur.length + 1 : 0);
+			if (room > 4) {
+				cur = cur ? `${cur} ${word.slice(0, room)}` : word.slice(0, room);
+				word = word.slice(room);
+			}
+			flush();
 		}
-		i++;
-		out++;
+		const next = cur ? `${cur} ${word}` : word;
+		if (lead.length + visible(next) > width) {
+			flush();
+			cur = word;
+		} else {
+			cur = next;
+		}
 	}
-	return `${s.slice(0, i)}…`;
+	flush();
+	return lines.length ? lines : [s];
 }
 
 // Pad to exactly `width` visible columns. The overlay composites over live
@@ -126,6 +209,8 @@ function activeSlots(reg: Map<string, Slot>, hidden: Set<string>): Slot[] {
 		.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
 }
 
+// A slot may return embedded newlines (launch and until both build two-line
+// blocks that way); split them out so wrapping and scrolling see real lines.
 function slotLines(
 	slot: Slot,
 	which: "row" | "card",
@@ -136,24 +221,28 @@ function slotLines(
 	try {
 		out = fn(width) ?? [];
 	} catch {
-		return [`\x1b[31m${slot.id}: render failed\x1b[0m`];
+		return [`${slot.id}: render failed`];
 	}
-	return out.filter((l) => l != null).map((l) => String(l));
+	return out
+		.filter((l) => l != null)
+		.flatMap((l) => mono(l).split("\n"));
 }
 
 // ── render min (the belowEditor strip) ─────────────────────────────
-// Row slots are packed onto as many lines as they need. A slot is atomic:
-// it never straddles a line break, so the strip reads as a list of segments
-// rather than a wrapped sentence.
+// Row slots are packed onto as many lines as fit. A slot is atomic: it never
+// straddles a line break, so the strip reads as a list of segments rather than
+// a wrapped sentence. The strip pushes the editor down, so it is capped —
+// everything past the cap lives one keypress away in the overlay.
+const MIN_ROWS_MAX = 4;
+
 function renderMin(
 	state: State,
 	reg: Map<string, Slot>,
 	width: number,
 ): string[] {
-	const SEP = " \x1b[90m·\x1b[0m ";
+	const SEP = " · ";
 	const segs: string[] = [];
-	const head = state.title || "billboard";
-	segs.push(`\x1b[1m${head}\x1b[0m`);
+	const head = mono(state.title || "billboard");
 	for (const slot of activeSlots(reg, state.hidden)) {
 		if (slot.size !== "row") continue;
 		const body = slotLines(slot, "row", width)
@@ -168,16 +257,27 @@ function renderMin(
 		const piece = cur ? SEP + seg : seg;
 		if (cur && visible(cur) + visible(piece) > width) {
 			lines.push(cur);
+			if (lines.length >= MIN_ROWS_MAX) break;
 			cur = seg;
 		} else {
 			cur += piece;
 		}
 	}
-	if (cur) lines.push(cur);
-	return lines.map((l) => truncate(l, width));
+	if (cur && lines.length < MIN_ROWS_MAX) lines.push(cur);
+	// The title heads the first line and is the one bold thing in the strip.
+	const out = lines.length ? lines : [""];
+	return out.map((l, i) =>
+		i === 0
+			? `${WHITE}${BOLD}${head}${RESET}${WHITE}${l ? SEP + l : ""}${RESET}`
+			: `${WHITE}${" ".repeat(Math.min(head.length + SEP.length, 12))}${l}${RESET}`,
+	);
 }
 
 // ── render max (full-screen overlay, borderless, scrollable) ───────
+// Two columns' worth of gutter is spent on structure so the eye can find a
+// section without colour: the heading sits flush left, its body indents two,
+// and the focused section carries a caret. Nothing is truncated — a long line
+// wraps with a hanging indent and the whole thing scrolls.
 function renderMax(
 	state: State,
 	reg: Map<string, Slot>,
@@ -186,39 +286,43 @@ function renderMax(
 ): string[] {
 	const slots = activeSlots(reg, state.hidden);
 	const focusable = slots.filter((s) => s.focusable);
+	const inner = Math.max(20, width - 2);
 	const body: string[] = [];
 	let any = false;
 	for (const slot of slots) {
-		const lines = slotLines(slot, "card", width);
+		const lines = slotLines(slot, "card", inner - 2);
 		if (lines.length === 0) continue;
 		if (any) body.push("");
 		any = true;
 		const focused = state.focus === slot.id;
-		if (slot.title || focused) {
-			const mark = focused ? "\x1b[36m▸\x1b[0m " : "";
-			body.push(`${mark}\x1b[1m${slot.title ?? slot.id}\x1b[0m`);
+		const head = (slot.title ?? slot.id).toUpperCase();
+		body.push(
+			`${BOLD}${focused ? "\u25b8 " : "  "}${head}${RESET}${WHITE}`,
+		);
+		for (const raw of lines) {
+			// Slot bodies already carry their own leading spaces; add the
+			// section gutter on top and wrap inside what is left.
+			for (const w of wrap(`  ${raw}`, inner)) body.push(w);
 		}
-		for (const raw of lines) body.push(truncate(raw, width));
 	}
-	if (!any) body.push("\x1b[90m(nothing to show — register a slot)\x1b[0m");
+	if (!any) body.push("  (nothing to show — register a slot)");
 
-	// Header: the title is the head, then the live key legend.
-	const hints = [state.focus ? "Esc unfocus" : "Esc/alt+p close"];
+	// Header: the title, then the live key legend for the state we are in.
+	const hints = [state.focus ? "Esc leave" : "Esc / alt+p close"];
 	if (focusable.length) hints.push("Tab focus");
-	if (body.length > height) hints.push("↑↓ scroll");
-	const header = `\x1b[1m${state.title || "billboard"}\x1b[0m \x1b[90m· ${hints.join(" · ")}\x1b[0m`;
-
 	const view = Math.max(1, height - 2);
+	if (body.length > view) hints.push("j/k PgUp/PgDn g scroll");
+	const title = mono(state.title || "billboard");
+	const header = `${BOLD}${title}${RESET}${WHITE}  ${hints.join("  ·  ")}`;
+
 	const max = Math.max(0, body.length - view);
 	if (state.scroll > max) state.scroll = max;
 	if (state.scroll < 0) state.scroll = 0;
 	const slice = body.slice(state.scroll, state.scroll + view);
-	const out = [header, "", ...slice];
+	const out = [header, "\u2500".repeat(width), ...slice];
 	if (max > 0)
-		out.push(
-			`\x1b[90m── ${state.scroll + slice.length}/${body.length} ──\x1b[0m`,
-		);
-	return out.map((l) => padTo(l, width));
+		out.push(`  ${state.scroll + slice.length}/${body.length}`);
+	return out.map((l) => `${WHITE}${padTo(l, width)}${RESET}`);
 }
 
 // ── extension ──────────────────────────────────────────────────────
@@ -369,13 +473,13 @@ export function installBillboard(pi: ExtensionAPI): void {
 		const rendered = lines.join("\n");
 		if (rendered === lastContent) return;
 		lastContent = rendered;
+		// The rule above the strip is white too — the panel does not borrow the
+		// theme's border colour, because the panel has exactly one colour.
 		ui.setWidget?.(
 			WIDGET_KEY,
-			(_t: any, thm: any) => {
+			() => {
 				const c = new Container();
-				c.addChild(
-					new DynamicBorder((s: string) => thm?.fg?.("borderMuted", s) ?? s),
-				);
+				c.addChild(new DynamicBorder((b: string) => `${WHITE}${b}${RESET}`));
 				for (const l of lines) c.addChild(new Text(` ${l}`, 1, 0));
 				return c;
 			},
@@ -402,23 +506,23 @@ export function installBillboard(pi: ExtensionAPI): void {
 	const builtins: Slot[] = [
 		{
 			id: "turn",
-			priority: 10,
+			priority: 80,
 			size: "row",
 			render: () => (state.turnCount > 0 ? [`turn ${state.turnCount}`] : []),
 		},
 		{
 			id: "last-user",
-			priority: 20,
+			priority: 90,
 			size: "row",
 			render: () =>
 				state.lastUserText
-					? [`last: "${truncate(state.lastUserText, 40)}"`]
+					? [`last: "${clip(state.lastUserText, 40)}"`]
 					: [],
 		},
 		{
 			id: "items",
 			title: "items",
-			priority: 900,
+			priority: 100,
 			size: "card",
 			// Right-align the id so the text column starts at the same
 			// offset for #1 and #100 alike.
