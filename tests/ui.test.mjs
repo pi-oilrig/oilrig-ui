@@ -456,6 +456,25 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	check("enter answers with the recommendation", out.details.answers[0].value === "whole" && out.details.answers[0].mode === "picked" && out.details.answers[0].wasRecommended === true);
 	check("result text names the recommendation", /your recommendation/.test(out.content[0].text));
 
+	// the briefing: problem / explanation / recommendation render above the options
+	s = ask([{ id: "scope", prompt: "How far?",
+		problem: "The parser reads the whole file before deciding.",
+		explanation: "A slice ships today; the whole feature costs a rewrite of the reader.",
+		recommendation: "Start small — the reader rewrite blocks two other tickets.",
+		options: [{ value: "small", label: "Small slice", recommended: true }, { value: "whole", label: "Whole feature" }] }]);
+	const briefed = s.view();
+	check("problem is rendered", briefed.includes("The parser reads the whole file"));
+	check("explanation is rendered", briefed.includes("costs a rewrite of the reader"));
+	check("recommendation is rendered above the options", briefed.includes("blocks two other tickets") && briefed.indexOf("blocks two other tickets") < briefed.indexOf("1. Small slice"));
+	s.feed("escape");
+	await s.p;
+
+	// briefing fields are optional — a bare question still renders
+	s = ask(one);
+	check("briefing is optional", s.view().includes("How far?") && s.view().includes("1. Small slice"));
+	s.feed("escape");
+	await s.p;
+
 	// c copies the highlighted option into an editable draft → enter ADDS it
 	s = ask(one);
 	s.feed("c");

@@ -4,7 +4,10 @@
 // the same reason the billboard panel lives here: one owner for chrome,
 // keybindings and the ui.custom overlay.
 //
-// What it adds over a plain option list: the agent may mark options as its
+// What it adds over a plain option list: each question carries a briefing —
+// the problem being decided, a short explanation of the tradeoff, and the
+// reason behind the recommendation — so the user answers with context instead
+// of guessing what the bare prompt means. The agent may mark options as its
 // recommendation (★), and `c` copies the highlighted option into an editable
 // draft. From the draft, enter ADDS it as an extra option (the original
 // survives) and ctrl+s REPLACES the original with the rewrite. Either way the
@@ -36,6 +39,9 @@ interface Question {
 	id: string;
 	label: string;
 	prompt: string;
+	problem?: string;
+	explanation?: string;
+	recommendation?: string;
 	options: Opt[];
 	allowOther: boolean;
 }
@@ -66,7 +72,24 @@ const OptSchema = Type.Object({
 const QuestionSchema = Type.Object({
 	id: Type.String({ description: "unique id for this question" }),
 	label: Type.Optional(Type.String({ description: "short tab label, e.g. 'Scope' (default Q1, Q2)" })),
-	prompt: Type.String({ description: "the question as asked" }),
+	prompt: Type.String({ description: "the question as asked, one line" }),
+	problem: Type.Optional(
+		Type.String({
+			description:
+				"what is actually being decided and why it came up — the situation in the code or the task that forces a choice (1-3 sentences)",
+		}),
+	),
+	explanation: Type.Optional(
+		Type.String({
+			description:
+				"short explanation of what separates the options — the tradeoff, cost or consequence the user is weighing (1-3 sentences)",
+		}),
+	),
+	recommendation: Type.Optional(
+		Type.String({
+			description: "why you recommend the starred option — your reasoning, not a restatement of its label",
+		}),
+	),
 	options: Type.Array(OptSchema, { description: "options, best first; mark one recommended" }),
 	allowOther: Type.Optional(Type.Boolean({ description: "offer a free-text option (default true)" })),
 });
@@ -82,6 +105,9 @@ function normalize(raw: any[]): Question[] {
 		id: String(q.id ?? `q${i + 1}`),
 		label: String(q.label || `Q${i + 1}`),
 		prompt: String(q.prompt ?? ""),
+		problem: q.problem ? String(q.problem) : undefined,
+		explanation: q.explanation ? String(q.explanation) : undefined,
+		recommendation: q.recommendation ? String(q.recommendation) : undefined,
 		allowOther: q.allowOther !== false,
 		options: (q.options ?? []).map((o: any) => ({
 			value: String(o.value ?? o.label ?? ""),
@@ -102,7 +128,7 @@ export function installQuestionnaire(pi: ExtensionAPI): void {
 		name: "questionnaire",
 		label: "Questionnaire",
 		description:
-			"Ask the user one or more questions in a TUI overlay. Give each question a few concrete options and mark one `recommended` — the user picks it, or presses `c` to rewrite it into an extra option. Use it to settle requirements, preferences and decisions instead of guessing.",
+			"Ask the user one or more questions in a TUI overlay. Brief each question first — `problem` (what is being decided and why it came up), `explanation` (what separates the options) and `recommendation` (why you recommend the starred one) — then give a few concrete options and mark one `recommended`. The user picks it, or presses `c` to rewrite it into an extra option. Use it to settle requirements, preferences and decisions instead of guessing.",
 		parameters: Params,
 
 		async execute(_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
@@ -344,7 +370,19 @@ export function installQuestionnaire(pi: ExtensionAPI): void {
 						return out;
 					}
 
-					put(" ", theme.fg("text", cur.prompt));
+					put(" ", theme.bold(theme.fg("text", cur.prompt)));
+					if (cur.problem) {
+						out.push("");
+						put(" ", theme.fg("text", cur.problem));
+					}
+					if (cur.explanation) {
+						out.push("");
+						put(" ", theme.fg("muted", cur.explanation));
+					}
+					if (cur.recommendation) {
+						out.push("");
+						put(theme.fg("success", " ★ "), theme.fg("muted", cur.recommendation));
+					}
 					out.push("");
 					const opts = rows();
 					for (let i = 0; i < opts.length; i++) {
