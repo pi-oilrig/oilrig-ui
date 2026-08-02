@@ -17,11 +17,16 @@ import {
 	CURSOR_MARKER,
 	fuzzyFilter,
 	getKeybindings,
-	matchesKey,
+	matchesKey as matchesKeyId,
 	sliceByColumn,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+// pi-tui's matchesKey narrows the key to its own KeyId union; the shortcuts
+// below name raw chords, so the key is passed through as written.
+const matchesKey = (data: string, key: string): boolean =>
+	matchesKeyId(data, key as never);
+
 import { spawn } from "node:child_process";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
@@ -57,7 +62,10 @@ function copyToClipboard(text: string): void {
 	const osc52 = () =>
 		process.stdout.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
 	const tryNext = (i: number): void => {
-		if (i >= candidates.length) return osc52();
+		if (i >= candidates.length) {
+			osc52();
+			return;
+		}
 		const [cmd, ...args] = candidates[i];
 		const child = spawn(cmd, args, { stdio: ["pipe", "ignore", "ignore"], timeout: 5000 });
 		let settled = false;
@@ -669,12 +677,12 @@ class InputStack {
 					borderColor: (text: string) => theme.fg("borderMuted", text),
 					selectList: getSelectListTheme(),
 				};
-				const ed = new CustomEditor(realTui, editorTheme, keybindings);
+				const ed = new CustomEditor(realTui, editorTheme, keybindings as any);
 				installSelection(ed);
 				installHistory(ed);
 				installLeftBar(ed, theme);
 				installGanttBoard(ed);
-				ed.__ctx = ctx;
+				(ed as any).__ctx = ctx;
 				return ed;
 			});
 		}, 100);

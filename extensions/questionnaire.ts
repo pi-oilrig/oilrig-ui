@@ -139,7 +139,7 @@ export function installQuestionnaire(pi: ExtensionAPI): void {
 			const multi = questions.length > 1;
 			const tabs = questions.length + 1;
 
-			const result = await ctx.ui.custom<Result>((tui: any, theme: any, _kb: any, done: (r: Result) => void) => {
+			const result: Result = await ctx.ui.custom((tui: any, theme: any, _kb: any, done: (r: Result) => void) => {
 				let tab = 0;
 				let sel = 0;
 				let draft: { qid: string; from?: Opt } | null = null;
