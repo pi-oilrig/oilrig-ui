@@ -20,12 +20,14 @@ export default function (pi: ExtensionAPI) {
 	// Editor stack — selection, history, :q, gantt board, left bar
 	installEditor(pi);
 
-	// Starship widget — model, tokens, kern, frontier, git, duration
-	installStarship(pi);
-
-	// Billboard — info panel: min strip in the widget, overlay on alt+p,
-	// slot registry on globalThis.__billboard for gantt/launch
+	// Billboard — the one info surface: min strip in the belowEditor widget,
+	// max overlay on alt+p, slot registry on globalThis.__billboard. Installed
+	// before its own slot providers so they register directly rather than
+	// through the pending queue.
 	installBillboard(pi);
+
+	// Starship — session telemetry, registered as the first billboard slot
+	installStarship(pi);
 
 	// Questionnaire — the agent asks, the user picks or rewrites (`c`), in an
 	// overlay over the editor slot

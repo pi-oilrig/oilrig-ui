@@ -1,22 +1,26 @@
-// Billboard — the info panel half of pi-ui: a min strip in the belowEditor
-// widget, a full overlay only while toggled. Folded in from the standalone
-// pi-billboard package: a top-of-terminal panel is chrome, and chrome lives
-// here beside the editor, the footer and the starship bar — one owner for the
-// widget slot, one keybinding table (alt+p), no cross-package globals needed
-// to draw a line.
+// Billboard — the one info surface of pi-ui. Every package that used to own a
+// belowEditor widget or an info overlay registers a *slot* here instead:
 //
-// Registration stays on globalThis.__billboard.register({ id, render, size,
-// priority?, title?, hidden? }) — gantt and launch register slots that way and
-// must keep working without knowing which package holds the panel.
+//   min  — the belowEditor widget: title + every `row` slot, packed to width.
+//   max  — a full-screen overlay (alt+p): every slot's card body, sectioned,
+//          scrollable, with Tab cycling focus through interactive slots.
 //
-// The panel's own title is the head of both renders (`setTitle`, or /billboard
-// title). gantt sets it to its board's URL: the strip is the one place a URL
-// can be printed as plain text, which every terminal linkifies on its own.
+// One widget key, one overlay, one keybinding table. Before this there were
+// eight competing setWidget callers stacking blocks under the editor
+// (starship, gantt, launch, until, rigor, file-awareness, todo/timeline) and
+// two separate ui.custom info overlays.
+//
+// Registration is globalThis.__billboard.register({ id, render, size, … }).
+// Extension load order across packages is not fixed, so a caller whose install
+// runs before ui's pushes onto globalThis.__billboardPending and is drained
+// here — see registerSlot() in each consumer.
 //
 // No clock, no per-frame cost: the widget is message-bound (agent_settled,
-// message_end, turn_end), the overlay exists only between two alt+p presses.
+// message_end, turn_end) plus explicit repaint(), and the overlay exists only
+// between two alt+p presses.
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Container, Text } from "@earendil-works/pi-tui";
 
 type SlotSize = "row" | "card";
 type Mode = "min" | "max";
@@ -26,8 +30,17 @@ interface Slot {
 	title?: string;
 	priority: number;
 	size: SlotSize;
-	render: () => string[];
+	/** min-strip body. Defaults to `render` when absent. */
+	row?: (width: number) => string[];
+	/** max-overlay body. */
+	render: (width: number) => string[];
 	hidden?: boolean;
+	/** Tab stops here in max mode and keys route to onInput. */
+	focusable?: boolean;
+	/** Return true to swallow the key; false/undefined lets the panel handle it. */
+	onInput?: (data: string) => boolean | void;
+	onFocus?: () => void;
+	onBlur?: () => void;
 }
 
 interface RegisterInput {
@@ -35,8 +48,13 @@ interface RegisterInput {
 	title?: string;
 	priority?: number;
 	size?: SlotSize;
-	render: () => string[];
+	row?: (width: number) => string[];
+	render: (width: number) => string[];
 	hidden?: boolean;
+	focusable?: boolean;
+	onInput?: (data: string) => boolean | void;
+	onFocus?: () => void;
+	onBlur?: () => void;
 }
 
 interface Registry {
@@ -44,7 +62,12 @@ interface Registry {
 	unregister(id: string): void;
 	setTitle(title: string): void;
 	list(): Slot[];
+	/** Redraw both surfaces — the strip and, if open, the overlay. */
 	repaint(): void;
+	/** Open the max overlay, optionally focusing one slot. */
+	open(focusId?: string): void;
+	close(): void;
+	mode(): Mode;
 }
 
 interface Item {
@@ -60,26 +83,32 @@ interface State {
 	lastUserText: string;
 	mode: Mode;
 	hidden: Set<string>;
+	focus: string | null;
+	scroll: number;
 }
 
-// ── helpers ────────────────────────────────────────────────────────
+// ── width helpers (ANSI-aware: escapes cost no columns) ────────────
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function visible(s: string): number {
+	return s.replace(ANSI_RE, "").length;
+}
+
 function truncate(s: string, max: number): string {
 	if (max <= 0) return "";
-	const plain = s.replace(ANSI_RE, "");
-	if (plain.length <= max) return s;
-	let visible = 0;
+	if (visible(s) <= max) return s;
+	let out = 0;
 	let i = 0;
-	while (i < s.length && visible < max - 1) {
+	while (i < s.length && out < max - 1) {
 		const m = s.slice(i).match(ANSI_RE);
 		if (m && m.index === 0) {
 			i += m[0].length;
 			continue;
 		}
 		i++;
-		visible++;
+		out++;
 	}
-	return s.slice(0, i) + "…";
+	return `${s.slice(0, i)}…`;
 }
 
 // Pad to exactly `width` visible columns. The overlay composites over live
@@ -87,8 +116,8 @@ function truncate(s: string, max: number): string {
 // reads as half-width — every line runs to the terminal edge instead.
 function padTo(s: string, width: number): string {
 	if (width <= 0) return s;
-	const visible = s.replace(ANSI_RE, "").length;
-	return visible >= width ? s : s + " ".repeat(width - visible);
+	const v = visible(s);
+	return v >= width ? s : s + " ".repeat(width - v);
 }
 
 function activeSlots(reg: Map<string, Slot>, hidden: Set<string>): Slot[] {
@@ -97,51 +126,105 @@ function activeSlots(reg: Map<string, Slot>, hidden: Set<string>): Slot[] {
 		.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
 }
 
-// ── render min (1-line strip) ──────────────────────────────────────
+function slotLines(
+	slot: Slot,
+	which: "row" | "card",
+	width: number,
+): string[] {
+	const fn = which === "row" ? (slot.row ?? slot.render) : slot.render;
+	let out: string[];
+	try {
+		out = fn(width) ?? [];
+	} catch {
+		return [`\x1b[31m${slot.id}: render failed\x1b[0m`];
+	}
+	return out.filter((l) => l != null).map((l) => String(l));
+}
+
+// ── render min (the belowEditor strip) ─────────────────────────────
+// Row slots are packed onto as many lines as they need. A slot is atomic:
+// it never straddles a line break, so the strip reads as a list of segments
+// rather than a wrapped sentence.
 function renderMin(
 	state: State,
 	reg: Map<string, Slot>,
 	width: number,
 ): string[] {
-	const parts = [state.title || "billboard"];
-	const rows = activeSlots(reg, state.hidden).filter((s) => s.size === "row");
-	for (const slot of rows) {
-		for (const line of slot.render()) {
-			const t = String(line ?? "").trim();
-			if (t) parts.push(t);
+	const SEP = " \x1b[90m·\x1b[0m ";
+	const segs: string[] = [];
+	const head = state.title || "billboard";
+	segs.push(`\x1b[1m${head}\x1b[0m`);
+	for (const slot of activeSlots(reg, state.hidden)) {
+		if (slot.size !== "row") continue;
+		const body = slotLines(slot, "row", width)
+			.map((l) => l.trim())
+			.filter(Boolean);
+		if (body.length) segs.push(body.join(" "));
+	}
+
+	const lines: string[] = [];
+	let cur = "";
+	for (const seg of segs) {
+		const piece = cur ? SEP + seg : seg;
+		if (cur && visible(cur) + visible(piece) > width) {
+			lines.push(cur);
+			cur = seg;
+		} else {
+			cur += piece;
 		}
 	}
-	return [truncate(parts.join(" · "), width)];
+	if (cur) lines.push(cur);
+	return lines.map((l) => truncate(l, width));
 }
 
-// ── render max (full-screen overlay, borderless) ───────────────────
+// ── render max (full-screen overlay, borderless, scrollable) ───────
 function renderMax(
 	state: State,
 	reg: Map<string, Slot>,
 	width: number,
+	height: number,
 ): string[] {
-	const lines: string[] = [];
-	lines.push(
-		`\x1b[1m${state.title || "billboard"}\x1b[0m \x1b[90m· alt+p / Esc to close\x1b[0m`,
-	);
-	lines.push("");
 	const slots = activeSlots(reg, state.hidden);
-	let first = true;
+	const focusable = slots.filter((s) => s.focusable);
+	const body: string[] = [];
+	let any = false;
 	for (const slot of slots) {
-		const body = slot.render().filter((l) => l != null);
-		if (body.length === 0) continue;
-		if (!first) lines.push("");
-		first = false;
-		if (slot.title) lines.push(`\x1b[1m${slot.title}\x1b[0m`);
-		for (const raw of body) lines.push(truncate(String(raw), width));
+		const lines = slotLines(slot, "card", width);
+		if (lines.length === 0) continue;
+		if (any) body.push("");
+		any = true;
+		const focused = state.focus === slot.id;
+		if (slot.title || focused) {
+			const mark = focused ? "\x1b[36m▸\x1b[0m " : "";
+			body.push(`${mark}\x1b[1m${slot.title ?? slot.id}\x1b[0m`);
+		}
+		for (const raw of lines) body.push(truncate(raw, width));
 	}
-	if (first) lines.push("(nothing to show — register a slot)");
-	return lines.map((l) => padTo(l, width));
+	if (!any) body.push("\x1b[90m(nothing to show — register a slot)\x1b[0m");
+
+	// Header: the title is the head, then the live key legend.
+	const hints = [state.focus ? "Esc unfocus" : "Esc/alt+p close"];
+	if (focusable.length) hints.push("Tab focus");
+	if (body.length > height) hints.push("↑↓ scroll");
+	const header = `\x1b[1m${state.title || "billboard"}\x1b[0m \x1b[90m· ${hints.join(" · ")}\x1b[0m`;
+
+	const view = Math.max(1, height - 2);
+	const max = Math.max(0, body.length - view);
+	if (state.scroll > max) state.scroll = max;
+	if (state.scroll < 0) state.scroll = 0;
+	const slice = body.slice(state.scroll, state.scroll + view);
+	const out = [header, "", ...slice];
+	if (max > 0)
+		out.push(
+			`\x1b[90m── ${state.scroll + slice.length}/${body.length} ──\x1b[0m`,
+		);
+	return out.map((l) => padTo(l, width));
 }
 
 // ── extension ──────────────────────────────────────────────────────
 export function installBillboard(pi: ExtensionAPI): void {
 	let ui: any;
+	let tui: any;
 	const WIDGET_KEY = "billboard";
 	const state: State = {
 		title: "",
@@ -150,29 +233,103 @@ export function installBillboard(pi: ExtensionAPI): void {
 		lastUserText: "",
 		mode: "min",
 		hidden: new Set(),
+		focus: null,
+		scroll: 0,
 	};
 	const registry = new Map<string, Slot>();
 
 	// ── cache: only call setWidget when content actually changes ─────
 	let lastContent: string | null = null;
 
-	// ── overlay for max mode (created only when toggled, zero cost otherwise) ──
+	// ── overlay for max mode (created only when toggled) ─────────────
 	let overlayDone: ((v: null) => void) | undefined;
 
-	function overlayRender(width: number): string[] {
-		return renderMax(state, registry, width);
+	function termHeight(): number {
+		return Math.max(6, (process.stdout.rows ?? 24) - 2);
 	}
+
+	function overlayRender(width: number): string[] {
+		return renderMax(state, registry, width, termHeight());
+	}
+
+	function focusables(): Slot[] {
+		return activeSlots(registry, state.hidden).filter((s) => s.focusable);
+	}
+
+	function setFocus(id: string | null): void {
+		if (state.focus === id) return;
+		const prev = state.focus ? registry.get(state.focus) : undefined;
+		prev?.onBlur?.();
+		state.focus = id;
+		if (id) registry.get(id)?.onFocus?.();
+		repaint();
+	}
+
+	function cycleFocus(back: boolean): void {
+		const list = focusables();
+		if (!list.length) return;
+		const at = list.findIndex((s) => s.id === state.focus);
+		const next = back
+			? at <= 0
+				? list.length - 1
+				: at - 1
+			: at < 0 || at === list.length - 1
+				? 0
+				: at + 1;
+		// Forward off the end unfocuses, so Tab walks out of the panel too.
+		if (!back && at === list.length - 1) setFocus(null);
+		else setFocus(list[next].id);
+	}
+
 	function overlayInput(data: string): void {
-		if (data === "\x1b" || data === "\x1bg" || data === "\x03") {
-			state.mode = "min";
-			updateWidget();
-			closeOverlay();
+		// A focused slot gets first refusal on every key but Tab — including Esc,
+		// so a slot in its own sub-mode (timeline's inline rename) can cancel that
+		// instead of losing focus. Returning false hands the key back.
+		if (state.focus) {
+			if (data === "\t") return cycleFocus(false);
+			if (data === "\x1b[Z") return cycleFocus(true);
+			const slot = registry.get(state.focus);
+			if (slot?.onInput?.(data)) {
+				repaint();
+				return;
+			}
+			if (data === "\x1b") return setFocus(null);
+			repaint();
+			return;
+		}
+		if (data === "\t") return cycleFocus(false);
+		if (data === "\x1b[Z") return cycleFocus(true);
+		if (data === "\x1b" || data === "\x1bp" || data === "\x03" || data === "q") {
+			toggle();
+			return;
+		}
+		if (data === "j" || data === "\x1b[B") {
+			state.scroll++;
+			return repaint();
+		}
+		if (data === "k" || data === "\x1b[A") {
+			state.scroll = Math.max(0, state.scroll - 1);
+			return repaint();
+		}
+		if (data === "\x1b[6~") {
+			state.scroll += termHeight() - 3;
+			return repaint();
+		}
+		if (data === "\x1b[5~") {
+			state.scroll = Math.max(0, state.scroll - (termHeight() - 3));
+			return repaint();
+		}
+		if (data === "g") {
+			state.scroll = 0;
+			return repaint();
 		}
 	}
+
 	function openOverlay(): void {
 		if (overlayDone || !ui?.custom) return;
 		void ui.custom(
-			(_tui: any, _theme: any, _kb: any, done: (v: null) => void) => {
+			(t: any, _theme: any, _kb: any, done: (v: null) => void) => {
+				tui = t;
 				overlayDone = done;
 				return {
 					render: overlayRender,
@@ -191,33 +348,52 @@ export function installBillboard(pi: ExtensionAPI): void {
 			},
 		);
 	}
+
 	function closeOverlay(): void {
 		overlayDone?.(null);
 		overlayDone = undefined;
+		tui = undefined;
 	}
 
-	// ── widget update (message-bound, no per-frame cost) ─────────
-	function updateWidget(): void {
+	// ── the one repaint entry point ─────────────────────────────────
+	// min repaints the widget, max asks the tui to re-render the overlay.
+	// Everything that mutates slot state calls this and nothing else.
+	function repaint(): void {
+		if (state.mode === "max") {
+			tui?.requestRender?.();
+			return;
+		}
 		if (!ui) return;
 		const width = process.stdout.columns ?? 80;
-		if (state.mode === "min") {
-			const lines = renderMin(state, registry, width);
-			const rendered = lines.join("\n");
-			if (rendered === lastContent) return; // skip if unchanged
-			lastContent = rendered;
-			ui.setWidget?.(WIDGET_KEY, lines, { placement: "belowEditor" });
-		}
-		// max mode is handled by the overlay
+		const lines = renderMin(state, registry, width);
+		const rendered = lines.join("\n");
+		if (rendered === lastContent) return;
+		lastContent = rendered;
+		ui.setWidget?.(
+			WIDGET_KEY,
+			(_t: any, thm: any) => {
+				const c = new Container();
+				c.addChild(
+					new DynamicBorder((s: string) => thm?.fg?.("borderMuted", s) ?? s),
+				);
+				for (const l of lines) c.addChild(new Text(` ${l}`, 1, 0));
+				return c;
+			},
+			{ placement: "belowEditor" },
+		);
 	}
 
 	function toggle(): void {
 		if (state.mode === "max") {
+			setFocus(null);
 			state.mode = "min";
+			state.scroll = 0;
 			closeOverlay();
-			updateWidget();
+			lastContent = null;
+			repaint();
 		} else {
 			state.mode = "max";
-			lastContent = null; // invalidate cache on toggle
+			state.scroll = 0;
 			openOverlay();
 		}
 	}
@@ -242,7 +418,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 		{
 			id: "items",
 			title: "items",
-			priority: 100,
+			priority: 900,
 			size: "card",
 			// Right-align the id so the text column starts at the same
 			// offset for #1 and #100 alike.
@@ -259,47 +435,81 @@ export function installBillboard(pi: ExtensionAPI): void {
 	for (const s of builtins) registry.set(s.id, s);
 
 	// ── cross-extension registry ────────────────────────────────
+	function toSlot(s: RegisterInput): Slot {
+		return {
+			id: s.id,
+			title: s.title,
+			priority: s.priority ?? 50,
+			size: s.size ?? "card",
+			row: s.row,
+			render: s.render,
+			hidden: s.hidden,
+			focusable: s.focusable,
+			onInput: s.onInput,
+			onFocus: s.onFocus,
+			onBlur: s.onBlur,
+		};
+	}
+
 	const api: Registry = {
 		register(s) {
-			registry.set(s.id, {
-				id: s.id,
-				title: s.title,
-				priority: s.priority ?? 50,
-				size: s.size ?? "card",
-				render: s.render,
-				hidden: s.hidden,
-			});
-			updateWidget();
+			registry.set(s.id, toSlot(s));
+			repaint();
 		},
 		unregister(id) {
 			registry.delete(id);
-			updateWidget();
+			if (state.focus === id) state.focus = null;
+			repaint();
 		},
 		setTitle(title) {
 			state.title = String(title ?? "");
-			updateWidget();
+			repaint();
 		},
 		list() {
 			return [...registry.values()];
 		},
 		repaint: () => {
 			lastContent = null;
-			updateWidget();
+			repaint();
 		},
+		open(focusId) {
+			if (state.mode !== "max") toggle();
+			if (focusId && registry.has(focusId)) setFocus(focusId);
+			else repaint();
+		},
+		close() {
+			if (state.mode === "max") toggle();
+		},
+		mode: () => state.mode,
 	};
 	(globalThis as any).__billboard = api;
+
+	// Drain anything registered before ui loaded.
+	const pending = (globalThis as any).__billboardPending;
+	if (Array.isArray(pending)) {
+		for (const s of pending.splice(0)) {
+			try {
+				api.register(s);
+			} catch {
+				/* a malformed pending slot must not kill the panel */
+			}
+		}
+	}
 
 	// ── events ──────────────────────────────────────────────────
 	pi.on("session_start", (_event: any, ctx: any) => {
 		ui = ctx.ui ?? ui;
-		updateWidget();
+		const late = (globalThis as any).__billboardPending;
+		if (Array.isArray(late)) for (const s of late.splice(0)) api.register(s);
+		lastContent = null;
+		repaint();
 	});
 
-	pi.on("agent_settled", () => updateWidget());
-	pi.on("message_end", () => updateWidget());
+	pi.on("agent_settled", () => repaint());
+	pi.on("message_end", () => repaint());
 	pi.on("turn_end", () => {
 		state.turnCount++;
-		updateWidget();
+		repaint();
 	});
 
 	pi.on("context", (event: any) => {
@@ -316,7 +526,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 			}
 			if (text !== null) {
 				state.lastUserText = text;
-				updateWidget();
+				repaint();
 			}
 			break;
 		}
@@ -340,12 +550,12 @@ export function installBillboard(pi: ExtensionAPI): void {
 	// ── command: /billboard ─────────────────────────────────────
 	pi.registerCommand("billboard", {
 		description:
-			"Dashboard: toggle mode, manage title/items, or list/hide/show registered slots.",
+			"The info panel: toggle min/max, manage title/items, or list/hide/show/focus registered slots.",
 		handler: async (args: string, ctx: any) => {
 			const a = args.trim();
 			if (a.startsWith("title ")) {
 				state.title = a.slice(6).trim();
-				updateWidget();
+				repaint();
 				ctx.ui?.notify?.(`billboard: title set to "${state.title}"`, "info");
 				return;
 			}
@@ -360,7 +570,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 						? Math.max(...state.items.map((x) => x.id)) + 1
 						: 1;
 				state.items.push({ id, text, done: false });
-				updateWidget();
+				repaint();
 				ctx.ui?.notify?.(`billboard: added #${id} "${text}"`, "info");
 				return;
 			}
@@ -373,7 +583,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 				const item = state.items.find((x) => x.id === id);
 				if (item) {
 					item.done = true;
-					updateWidget();
+					repaint();
 					ctx.ui?.notify?.(`billboard: done #${id} "${item.text}"`, "info");
 				} else ctx.ui?.notify?.(`billboard: no item #${id}`, "warning");
 				return;
@@ -381,7 +591,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 			if (a === "clear") {
 				const n = state.items.filter((x) => x.done).length;
 				state.items = state.items.filter((x) => !x.done);
-				updateWidget();
+				repaint();
 				ctx.ui?.notify?.(
 					`billboard: removed ${n} completed item${n !== 1 ? "s" : ""}`,
 					"info",
@@ -407,7 +617,8 @@ export function installBillboard(pi: ExtensionAPI): void {
 					.map((s) => {
 						const st = state.hidden.has(s.id) ? "hidden" : "shown";
 						const t = s.title ? ` "${s.title}"` : "";
-						return `  [${st}] ${s.id}${t} · ${s.size} · p${s.priority}`;
+						const f = s.focusable ? " · focusable" : "";
+						return `  [${st}] ${s.id}${t} · ${s.size} · p${s.priority}${f}`;
 					});
 				ctx.ui?.notify?.(
 					`billboard slots:\n${rows.join("\n") || "  (none)"}`,
@@ -417,17 +628,26 @@ export function installBillboard(pi: ExtensionAPI): void {
 			}
 			if (a.startsWith("hide ")) {
 				state.hidden.add(a.slice(5).trim());
-				updateWidget();
+				repaint();
 				ctx.ui?.notify?.(`billboard: hid slot "${a.slice(5).trim()}"`, "info");
 				return;
 			}
 			if (a.startsWith("show ")) {
 				state.hidden.delete(a.slice(5).trim());
-				updateWidget();
+				repaint();
 				ctx.ui?.notify?.(
 					`billboard: showed slot "${a.slice(5).trim()}"`,
 					"info",
 				);
+				return;
+			}
+			if (a.startsWith("focus ")) {
+				const id = a.slice(6).trim();
+				if (!registry.has(id)) {
+					ctx.ui?.notify?.(`billboard: no slot "${id}"`, "warning");
+					return;
+				}
+				api.open(id);
 				return;
 			}
 			toggle();

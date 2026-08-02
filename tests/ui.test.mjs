@@ -69,7 +69,7 @@ writeFileSync(
 );
 
 // Copy extension files
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "questionnaire.ts", "colors.ts", "retro.ts"])
+for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "slot.ts", "questionnaire.ts", "colors.ts", "retro.ts"])
 	writeFileSync(join(SCRATCH, "extensions", part), readFileSync(join(ROOT, "extensions", part), "utf8"));
 
 const results = [];
@@ -311,9 +311,10 @@ check("starship telemetry: TTFT", /ttft/.test(teleLine));
 check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
 check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 
-// ── billboard (folded in from pi-billboard) ──
-// Driven through installBillboard directly: the panel owns a widget key, an
-// overlay and a slot registry, none of which the style/editor stubs supply.
+// ── billboard — the one info surface ──
+// Driven through installBillboard directly: the panel owns the only
+// belowEditor widget, the only info overlay and the slot registry, none of
+// which the style/editor stubs supply.
 {
 	const { installBillboard } = await import(pathToFileURL(join(SCRATCH, "extensions/billboard.ts")).href);
 	const makeBoardPi = () => {
@@ -331,7 +332,7 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	const makeBoardUi = () => {
 		const overlays = [];
 		const widgetCalls = [];
-		const tui = { requestRender: () => {} };
+		const tui = { renders: 0, requestRender() { this.renders++; } };
 		return {
 			overlays, widgetCalls, tui, notes: [],
 			custom(factory, opts) {
@@ -348,6 +349,18 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	};
 	const active = (ui) => [...ui.overlays].reverse().find((o) => !o.closed);
 	const lastW = (ui) => ui.widgetCalls[ui.widgetCalls.length - 1];
+	const noAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "");
+	// The strip is a component factory now (bordered, like every other pi-ui
+	// widget); the border row is not content.
+	const strip = (ui) => {
+		const c = lastW(ui)?.lines;
+		if (typeof c !== "function") return [];
+		return c({}, { fg: (_k, t) => t })
+			.render(80)
+			.map((l) => noAnsi(l).trim())
+			.filter((l) => l && !/^-+$/.test(l));
+	};
+	const maxLines = (ov) => ov.component.render(80).map(noAnsi);
 
 	// min widget on session_start
 	const pi = makeBoardPi();
@@ -355,7 +368,9 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	installBillboard(pi);
 	await pi.fire("session_start", {}, { ui: bui });
 	const w0 = lastW(bui);
-	check("billboard widget is belowEditor, one line", w0?.key === "billboard" && w0.opts?.placement === "belowEditor" && w0.lines.length === 1);
+	check("billboard owns the belowEditor widget", w0?.key === "billboard" && w0.opts?.placement === "belowEditor");
+	check("min strip is a bordered component", typeof w0?.lines === "function");
+	check("min strip is one packed line", strip(bui).length === 1);
 
 	// alt+p toggles max (overlay) and back
 	const sc = pi.shortcuts.get("alt+p");
@@ -363,54 +378,134 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	await sc.handler({ ui: bui });
 	const ov = active(bui);
 	check("alt+p opens a non-capturing overlay", !!ov && ov.options?.overlayOptions?.()?.nonCapturing === true);
-	check("max render is multi-line and names alt+p", ov.component.render(80).length > 1 && ov.component.render(80).some((l) => l.includes("alt+p")));
+	check("max render is multi-line and names alt+p", maxLines(ov).length > 1 && maxLines(ov).some((l) => l.includes("alt+p")));
 	ov.component.handleInput("\x1b");
 	check("Esc closes back to min", !active(bui));
+	await sc.handler({ ui: bui });
+	active(bui).component.handleInput("q");
+	check("q closes too", !active(bui));
 
 	// title/items round trip, min + max. The title is the HEAD of the strip and
 	// of the overlay header — gantt puts its board URL there, so it must not be
 	// pushed off by another slot.
-	check("default head is the panel name", lastW(bui).lines[0].startsWith("billboard"));
+	check("default head is the panel name", strip(bui)[0].startsWith("billboard"));
 	await pi.command.handler("title myproject", { ui: bui });
-	check("title replaces the head of the min strip", lastW(bui).lines[0].startsWith("myproject"));
-	check("title is not also printed as a slot", lastW(bui).lines[0].split("myproject").length === 2);
+	check("title replaces the head of the min strip", strip(bui)[0].startsWith("myproject"));
+	check("title is not also printed as a slot", strip(bui)[0].split("myproject").length === 2);
 	await pi.command.handler("add first task", { ui: bui });
 	await pi.command.handler("add second task", { ui: bui });
 	await sc.handler({ ui: bui });
 	const ov2 = active(bui);
-	check("items render in max", ov2.component.render(80).some((l) => l.includes("first task")));
+	check("items render in max", maxLines(ov2).some((l) => l.includes("first task")));
 	await pi.command.handler("done 1", { ui: bui });
 	await pi.command.handler("clear", { ui: bui });
-	const cleared = ov2.component.render(80);
+	const cleared = maxLines(ov2);
 	check("clear drops completed, keeps open", !cleared.some((l) => l.includes("first task")) && cleared.some((l) => l.includes("second task")));
 
-	// slot registry — gantt/launch register through globalThis
+	// A mutation while the overlay is up must reach the tui, not just the
+	// (invisible) strip — repaint() used to dead-end in max mode.
+	const before = bui.tui.renders;
+	await pi.command.handler("add third task", { ui: bui });
+	check("mutating in max mode re-renders the overlay", bui.tui.renders > before);
+
+	// slot registry — gantt/launch/until/… register through globalThis
 	const api = globalThis.__billboard;
 	check("slot registry exposed on globalThis", typeof api?.register === "function");
-	check("registry exposes setTitle", typeof api?.setTitle === "function");
+	check("registry exposes setTitle/open/close/mode", ["setTitle", "open", "close", "mode"].every((k) => typeof api?.[k] === "function"));
 	api.setTitle("http://localhost:3333/proj-abc123");
-	check("setTitle heads the max overlay", ov2.component.render(80)[0].includes("http://localhost:3333/proj-abc123"));
+	check("setTitle heads the max overlay", maxLines(ov2)[0].includes("http://localhost:3333/proj-abc123"));
 	api.register({ id: "stats", title: "stats", priority: 200, size: "card", render: () => ["cpu: 42%"] });
-	check("external card slot renders", ov2.component.render(80).some((l) => l.includes("cpu: 42%")));
+	check("external card slot renders", maxLines(ov2).some((l) => l.includes("cpu: 42%")));
 	api.register({ id: "branch", priority: 15, size: "row", render: () => ["branch: main"] });
 	await sc.handler({ ui: bui }); // → min
-	check("external row slot in min strip", lastW(bui).lines[0].includes("branch: main"));
+	check("external row slot in min strip", strip(bui).join(" ").includes("branch: main"));
 	await sc.handler({ ui: bui }); // → max
 	await pi.command.handler("hide stats", { ui: bui });
-	check("hidden slot suppressed", !ov2.component.render(80).some((l) => l.includes("cpu: 42%")));
+	check("hidden slot suppressed", !maxLines(ov2).some((l) => l.includes("cpu: 42%")));
 	await pi.command.handler("show stats", { ui: bui });
 	api.unregister("stats");
-	check("unregistered slot gone", !ov2.component.render(80).some((l) => l.includes("cpu: 42%")));
+	check("unregistered slot gone", !maxLines(ov2).some((l) => l.includes("cpu: 42%")));
 
-	// turn counter — the strip only repaints in min mode, so drop out of max first
-	await sc.handler({ ui: bui });
+	// A slot that throws must not take the panel down with it.
+	api.register({ id: "boom", title: "boom", priority: 300, size: "card", render: () => { throw new Error("nope"); } });
+	check("a throwing slot degrades to one error line", maxLines(ov2).some((l) => l.includes("boom: render failed")));
+	api.unregister("boom");
+
+	// A row slot may differ from its card body — starship's one-liner vs its
+	// broken-out detail.
+	api.register({ id: "two-faced", title: "two", priority: 250, size: "row", row: () => ["SHORT"], render: () => ["LONG DETAIL"] });
+	check("card body used in max", maxLines(ov2).some((l) => l.includes("LONG DETAIL")) && !maxLines(ov2).some((l) => l.includes("SHORT")));
+	await sc.handler({ ui: bui }); // → min
+	check("row body used in min", strip(bui).join(" ").includes("SHORT") && !strip(bui).join(" ").includes("LONG DETAIL"));
+	await sc.handler({ ui: bui }); // → max
+	api.unregister("two-faced");
+
+	// interactive slot: Tab focuses it, keys route to onInput, Esc unfocuses
+	const keys = [];
+	let counter = 0;
+	api.register({
+		id: "inter", title: "inter", priority: 400, size: "card",
+		focusable: true,
+		render: () => [`count ${counter}`],
+		// Returning false hands the key back to the panel — that is how Esc
+		// still unfocuses while a slot in a sub-mode could keep it.
+		onInput: (d) => { keys.push(d); if (d === "j") { counter++; return true; } return false; },
+	});
+	check("focusable slot is listed as such", api.list().find((s) => s.id === "inter")?.focusable === true);
+	const ov3 = active(bui);
+	ov3.component.handleInput("\t");
+	check("Tab focuses the interactive slot", maxLines(ov3).some((l) => l.includes("▸ inter")) || maxLines(ov3).some((l) => l.startsWith("▸")));
+	ov3.component.handleInput("j");
+	check("keys route to the focused slot", keys.includes("j") && counter === 1);
+	check("focused body re-rendered", maxLines(ov3).some((l) => l.includes("count 1")));
+	ov3.component.handleInput("\x1b");
+	check("Esc unfocuses before it closes", !!active(bui));
+	ov3.component.handleInput("\x1b");
+	check("second Esc closes", !active(bui));
+
+	// /billboard focus <id> opens straight onto a slot
+	await pi.command.handler("focus inter", { ui: bui });
+	const ov4 = active(bui);
+	check("/billboard focus opens max on that slot", !!ov4 && api.mode() === "max");
+	ov4.component.handleInput("j");
+	check("focused via command still receives keys", counter === 2);
+	ov4.component.handleInput("\x1b");
+	ov4.component.handleInput("\x1b");
+	api.unregister("inter");
+
+	// scrolling: a card taller than the viewport must be reachable
+	api.register({ id: "tall", title: "tall", priority: 500, size: "card", render: () => Array.from({ length: 200 }, (_, i) => `line-${i}`) });
+	await sc.handler({ ui: bui }); // → max
+	const ov5 = active(bui);
+	const top = maxLines(ov5);
+	ov5.component.handleInput("\x1b[6~"); // PageDown
+	const paged = maxLines(ov5);
+	check("PageDown scrolls the overlay", paged.join("\n") !== top.join("\n"));
+	ov5.component.handleInput("g");
+	check("g returns to the top", maxLines(ov5).join("\n") === top.join("\n"));
+	check("scroll position is reported", maxLines(ov5).some((l) => /\d+\/\d+/.test(l)));
+	api.unregister("tall");
+	ov5.component.handleInput("\x1b");
+
+	// turn counter — the strip only repaints in min mode
 	await pi.fire("turn_end", {}, {});
 	await pi.fire("turn_end", {}, {});
-	check("turn count in min strip", (lastW(bui).lines[0] ?? "").includes("turn 2"));
+	check("turn count in min strip", strip(bui).join(" ").includes("turn 2"));
 
 	// shutdown clears overlay, widget and the global
 	await pi.fire("session_shutdown", {}, {});
 	check("shutdown closes overlay + clears widget + registry", !active(bui) && lastW(bui)?.lines === undefined && globalThis.__billboard === undefined);
+
+	// pending queue: a package whose install beats ui's registers into
+	// globalThis.__billboardPending and the panel drains it.
+	globalThis.__billboardPending = [{ id: "early", priority: 5, size: "row", render: () => ["EARLY"] }];
+	const pi2 = makeBoardPi();
+	const bui2 = makeBoardUi();
+	installBillboard(pi2);
+	await pi2.fire("session_start", {}, { ui: bui2 });
+	check("pending slots are drained on install", strip(bui2).join(" ").includes("EARLY"));
+	check("pending queue is emptied", globalThis.__billboardPending.length === 0);
+	await pi2.fire("session_shutdown", {}, {});
 }
 
 // ── questionnaire ──
