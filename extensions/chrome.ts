@@ -102,7 +102,9 @@ function paintStatus(key: string, text: string): string {
 }
 
 function buildStatusRows(statuses: Map<string, string>, width: number): string[] {
-	const cap = Math.max(20, Math.floor(width / 2));
+	// One entry may run the whole terminal; the only cap is the terminal edge
+	// (minus the box border), so a long status is cut at the frame, not halfway.
+	const cap = Math.max(20, width - 4);
 	const entries = Array.from(statuses.entries())
 		.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b))
 		.filter(([key]) => !VOLATILE.has(key))

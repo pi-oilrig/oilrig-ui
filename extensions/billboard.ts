@@ -77,6 +77,15 @@ function truncate(s: string, max: number): string {
 	return s.slice(0, i) + "…";
 }
 
+// Pad to exactly `width` visible columns. The overlay composites over live
+// chat, so a short line lets the message behind bleed through and the panel
+// reads as half-width — every line runs to the terminal edge instead.
+function padTo(s: string, width: number): string {
+	if (width <= 0) return s;
+	const visible = s.replace(ANSI_RE, "").length;
+	return visible >= width ? s : s + " ".repeat(width - visible);
+}
+
 function activeSlots(reg: Map<string, Slot>, hidden: Set<string>): Slot[] {
 	return [...reg.values()]
 		.filter((s) => !s.hidden && !hidden.has(s.id))
@@ -120,7 +129,7 @@ function renderMax(
 		for (const raw of body) lines.push(truncate(String(raw), width));
 	}
 	if (first) lines.push("(nothing to show — register a slot)");
-	return lines;
+	return lines.map((l) => padTo(l, width));
 }
 
 // ── extension ──────────────────────────────────────────────────────
