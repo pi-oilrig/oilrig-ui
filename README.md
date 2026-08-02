@@ -15,7 +15,7 @@ Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
 | **chrome** | Suppresses open-tui welcome header, silences ponytail toast/status, wraps footer with colored extension-status rows + version tag. |
 | **starship** | Single-line widget below editor: model, tokens (↑in ↓out), kern ops, frontier cursor, git branch, session duration. |
 | **questionnaire** | The `questionnaire` tool: the agent asks one or more questions in an overlay. Each question is briefed — `problem` (what is being decided and why it came up), `explanation` (what separates the options) and `recommendation` (why the starred option) render above the list, so the user answers with context. One option is marked `recommended` (★, pre-selected); the user picks it, rewrites it (`c`) or writes their own. The answer carries *how* it was reached — picked / added / replaced — so a rewritten recommendation reads as a rewrite, not a bare string. |
-| **billboard** | Info panel: one-line strip in the widget, full overlay on `alt+p` / `/billboard`. Title, turn count, last input, items (`add`/`done`/`clear`/`list`), plus a slot registry on `globalThis.__billboard` that gantt and launch draw into (`register({ id, render, size, priority })`, `/billboard slots|hide|show`). |
+| **billboard** | Info panel: one-line strip in the widget, full overlay on `alt+p` / `/billboard`. The **title heads both renders** (`/billboard title <text>`, or `globalThis.__billboard.setTitle()` — gantt sets it to its board URL, plain text the terminal linkifies), then turn count, last input, items (`add`/`done`/`clear`/`list`), plus a slot registry on `globalThis.__billboard` that gantt and launch draw into (`register({ id, render, size, priority })`, `/billboard slots|hide|show`). |
 
 ## Keys
 

@@ -9,6 +9,10 @@
 // priority?, title?, hidden? }) — gantt and launch register slots that way and
 // must keep working without knowing which package holds the panel.
 //
+// The panel's own title is the head of both renders (`setTitle`, or /billboard
+// title). gantt sets it to its board's URL: the strip is the one place a URL
+// can be printed as plain text, which every terminal linkifies on its own.
+//
 // No clock, no per-frame cost: the widget is message-bound (agent_settled,
 // message_end, turn_end), the overlay exists only between two alt+p presses.
 
@@ -38,6 +42,7 @@ interface RegisterInput {
 interface Registry {
 	register(s: RegisterInput): void;
 	unregister(id: string): void;
+	setTitle(title: string): void;
 	list(): Slot[];
 	repaint(): void;
 }
@@ -98,7 +103,7 @@ function renderMin(
 	reg: Map<string, Slot>,
 	width: number,
 ): string[] {
-	const parts = ["billboard"];
+	const parts = [state.title || "billboard"];
 	const rows = activeSlots(reg, state.hidden).filter((s) => s.size === "row");
 	for (const slot of rows) {
 		for (const line of slot.render()) {
@@ -116,7 +121,9 @@ function renderMax(
 	width: number,
 ): string[] {
 	const lines: string[] = [];
-	lines.push("\x1b[1mbillboard\x1b[0m \x1b[90m· alt+p / Esc to close\x1b[0m");
+	lines.push(
+		`\x1b[1m${state.title || "billboard"}\x1b[0m \x1b[90m· alt+p / Esc to close\x1b[0m`,
+	);
 	lines.push("");
 	const slots = activeSlots(reg, state.hidden);
 	let first = true;
@@ -218,12 +225,6 @@ export function installBillboard(pi: ExtensionAPI): void {
 	// ── built-in slots ──────────────────────────────────────────
 	const builtins: Slot[] = [
 		{
-			id: "title",
-			priority: 5,
-			size: "row",
-			render: () => (state.title ? [state.title] : []),
-		},
-		{
 			id: "turn",
 			priority: 10,
 			size: "row",
@@ -272,6 +273,10 @@ export function installBillboard(pi: ExtensionAPI): void {
 		},
 		unregister(id) {
 			registry.delete(id);
+			updateWidget();
+		},
+		setTitle(title) {
+			state.title = String(title ?? "");
 			updateWidget();
 		},
 		list() {

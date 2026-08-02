@@ -367,9 +367,13 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	ov.component.handleInput("\x1b");
 	check("Esc closes back to min", !active(bui));
 
-	// title/items round trip, min + max
+	// title/items round trip, min + max. The title is the HEAD of the strip and
+	// of the overlay header — gantt puts its board URL there, so it must not be
+	// pushed off by another slot.
+	check("default head is the panel name", lastW(bui).lines[0].startsWith("billboard"));
 	await pi.command.handler("title myproject", { ui: bui });
-	check("title lands in the min strip", lastW(bui).lines[0].includes("myproject"));
+	check("title replaces the head of the min strip", lastW(bui).lines[0].startsWith("myproject"));
+	check("title is not also printed as a slot", lastW(bui).lines[0].split("myproject").length === 2);
 	await pi.command.handler("add first task", { ui: bui });
 	await pi.command.handler("add second task", { ui: bui });
 	await sc.handler({ ui: bui });
@@ -383,6 +387,9 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	// slot registry — gantt/launch register through globalThis
 	const api = globalThis.__billboard;
 	check("slot registry exposed on globalThis", typeof api?.register === "function");
+	check("registry exposes setTitle", typeof api?.setTitle === "function");
+	api.setTitle("http://localhost:3333/proj-abc123");
+	check("setTitle heads the max overlay", ov2.component.render(80)[0].includes("http://localhost:3333/proj-abc123"));
 	api.register({ id: "stats", title: "stats", priority: 200, size: "card", render: () => ["cpu: 42%"] });
 	check("external card slot renders", ov2.component.render(80).some((l) => l.includes("cpu: 42%")));
 	api.register({ id: "branch", priority: 15, size: "row", render: () => ["branch: main"] });
