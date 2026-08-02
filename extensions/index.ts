@@ -12,6 +12,7 @@ import { installEditor } from "./editor.ts";
 import { installStarship } from "./starship.ts";
 import { installBillboard } from "./billboard.ts";
 import { installQuestionnaire } from "./questionnaire.ts";
+import { installContextTracker } from "./context.ts";
 
 export default function (pi: ExtensionAPI) {
 	// Style prompt — terse+ADHD on every turn, subagent injection, reminder
@@ -32,6 +33,9 @@ export default function (pi: ExtensionAPI) {
 	// Questionnaire — the agent asks, the user picks or rewrites (`c`), in an
 	// overlay over the editor slot
 	installQuestionnaire(pi);
+
+	// Context tracker — progress bar in the status bar
+	installContextTracker(pi);
 
 	// Chrome wraps — header/footer suppression, status line, version tag
 	// Must be last so it wraps whatever footer the editor installs

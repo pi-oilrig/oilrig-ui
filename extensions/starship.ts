@@ -15,7 +15,7 @@
 // one per line and adds the input/output split the strip has no room for.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { AMBER, CYAN, DIM, RED, RESET, hms, fmt } from "./retro.ts";
+import { AMBER, CYAN, DIM, RED, RESET, hms, fmt, ANGLE_R } from "./retro.ts";
 import { registerSlot, repaintSlots, unregisterSlot } from "./slot.ts";
 
 const SLOT_ID = "starship";
@@ -95,7 +95,7 @@ export function installStarship(pi: ExtensionAPI): void {
 		if (tok > 0) parts.push(segment("tok", fmt(tok)));
 		if (stallCount > 0)
 			parts.push(`${RED}stall ${stallCount}x ${hms(stallMs)}${RESET}`);
-		return `${AMBER}▶${RESET} ${parts.join(` ${DIM}│${RESET} `)}`;
+		return `${AMBER}${ANGLE_R}${RESET} ${parts.join(` ${DIM}│${RESET} `)}`;
 	}
 
 	function cardLines(): string[] {

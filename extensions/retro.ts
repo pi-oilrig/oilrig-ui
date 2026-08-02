@@ -44,6 +44,10 @@ export const FULL = "█";  export const DARK  = "▓";  export const MED  = "�
 export const LITE = "░";  export const UHALF = "▀";  export const LHALF = "▄";
 export const LBLK = "▌";  export const RBLK  = "▐";
 
+// ── nerd-font glyphs ─────────────────────────────────────────────────────
+export const FOLDER = "\uF07C";  //  nf-fa-folder
+export const ANGLE_R = "\uF054"; //  nf-fa-angle-right
+
 // ── status indicators ──────────────────────────────────────────────────────
 export const ACTIVE  = `${GREEN}●${RESET}`;
 export const IDLE    = `${DIM}○${RESET}`;

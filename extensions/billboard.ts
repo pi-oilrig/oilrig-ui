@@ -19,7 +19,7 @@
 // message_end, turn_end) plus explicit repaint(), and the overlay exists only
 // between two f2 presses.
 
-import { DynamicBorder, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
 
 type SlotSize = "row" | "card";
@@ -240,7 +240,7 @@ function renderMin(
 	reg: Map<string, Slot>,
 	width: number,
 ): string[] {
-	const SEP = " · ";
+	const SEP = "  ";
 	const segs: string[] = [];
 	const head = mono(state.title || "billboard");
 	for (const slot of activeSlots(reg, state.hidden)) {
@@ -473,13 +473,10 @@ export function installBillboard(pi: ExtensionAPI): void {
 		const rendered = lines.join("\n");
 		if (rendered === lastContent) return;
 		lastContent = rendered;
-		// The rule above the strip is white too — the panel does not borrow the
-		// theme's border colour, because the panel has exactly one colour.
 		ui.setWidget?.(
 			WIDGET_KEY,
 			() => {
 				const c = new Container();
-				c.addChild(new DynamicBorder((b: string) => `${WHITE}${b}${RESET}`));
 				for (const l of lines) c.addChild(new Text(` ${l}`, 1, 0));
 				return c;
 			},

@@ -2,38 +2,40 @@
 //
 // Three jobs:
 //   1. no-header: suppress open-tui's welcome header via setHeader wrap.
-//   2. status-line: wrap setFooter to append extension-status rows with
-//      colored keys, greedy-packed into terminal width, plus a version tag.
+//   2. status-line: wrap setFooter to render a clean left/right pair layout
+//      per line, ordered by importance. Line 1: CWD + context bar. Line 2:
+//      pi's stats (tokens+cost left, model right). Lines 3+: extension pairs.
+//      No box borders, no side rails, no greedy packing.
 //   3. silence-ponytail: only needed if ponytail is loaded — harmless no-op
 //      when absent.
 
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AMBER, CYAN, DIM, GREEN, MAGENTA, RED, RESET, ACTIVE, DONE, IDLE, V, H, TL, TR, BL, BR, chip, vw } from "./retro.ts";
+import { AMBER, CYAN, DIM, GREEN, MAGENTA, RED, RESET, H, vw, FOLDER } from "./retro.ts";
 
 // Retro palette: amber primary, green for active, dim for metadata
 const PALETTE = [CYAN, GREEN, AMBER, MAGENTA, RED];
-const MIN_GAP = 2;
 
 // Volatile keys: shown when active but filtered out of the steady-state status bar
 const VOLATILE = new Set([
 	"watch", "toolband", "loop", "touches", "ap",
 ]);
 
-// Known status keys: retro glyphs + amber-on-green palette, gantt first
+// Known status keys: nerd-font glyphs, ordered by rank
 const META: Record<string, { icon: string; color: string; rank: number }> = {
-	gantt: { icon: "\u25B6", color: AMBER, rank: 0 },
-	kern: { icon: "\u25C6", color: GREEN, rank: 1 },
-	hub: { icon: "\u2299", color: AMBER, rank: 2 },
-	ontology: { icon: "\u25C7", color: MAGENTA, rank: 3 },
-	timeline: { icon: "\u25F7", color: CYAN, rank: 4 },
-	rigor: { icon: "\u2713", color: GREEN, rank: 5 },
-	pace: { icon: "\u25AA", color: CYAN, rank: 6 },
-	launch: { icon: "\u2699", color: AMBER, rank: 7 },
-	trunk: { icon: "\u21BB", color: MAGENTA, rank: 8 },
+	gantt: { icon: "\uF47F", color: AMBER, rank: 0 },      //  nf-fa-tasks
+	kern: { icon: "\uF1C0", color: GREEN, rank: 1 },       //  nf-fa-database
+	hub: { icon: "\uF126", color: AMBER, rank: 2 },        //  nf-fa-code-fork
+	context: { icon: "\uF85A", color: CYAN, rank: 2.5 },   //  nf-mdi-memory
+	ontology: { icon: "\uF0E7", color: MAGENTA, rank: 3 }, //  nf-fa-code
+	timeline: { icon: "\uF017", color: CYAN, rank: 4 },    //  nf-fa-clock-o
+	rigor: { icon: "\uF00C", color: GREEN, rank: 5 },      //  nf-fa-check
+	pace: { icon: "\uF04B", color: CYAN, rank: 6 },        //  nf-fa-play
+	launch: { icon: "\uF085", color: AMBER, rank: 7 },     //  nf-fa-gears
+	trunk: { icon: "\uF1D3", color: MAGENTA, rank: 8 },    //  nf-fa-terminal
 };
 
 function rankOf(key: string): number { return META[key]?.rank ?? 100; }
@@ -94,48 +96,23 @@ function paintStatus(key: string, text: string): string {
 	const meta = META[key];
 	const color = meta ? meta.color : colorFor(key);
 	const icon = meta ? `${meta.icon} ` : "";
-	// Retro format: dim label ─ amber value with box-drawing
 	const inner = clean.includes("\x1b[")
 		? `${color}${icon}${RESET}${clean}`
 		: `${color}${icon}${clean}${RESET}`;
-	return `${DIM}${V}${RESET} ${inner}`;
+	return ` ${inner}`;
 }
 
-function buildStatusRows(statuses: Map<string, string>, width: number): string[] {
-	// One entry may run the whole terminal; the only cap is the terminal edge
-	// (minus the box border), so a long status is cut at the frame, not halfway.
-	const cap = Math.max(20, width - 4);
-	const entries = Array.from(statuses.entries())
-		.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b))
-		.filter(([key]) => !VOLATILE.has(key))
-		.map(([key, text]) => paintStatus(key, text))
-		.filter((s) => vw(s) > 0)
-		.map((s) => (vw(s) > cap ? truncateToWidth(s, cap, "…") : s));
-	const rows: string[][] = [];
-	let row: string[] = [];
-	let used = 0;
-	// Account for retro box border: │ prefix + space = 2 chars
-	const innerWidth = width - 2;
-	for (const entry of entries) {
-		const w = vw(entry);
-		if (row.length && used + MIN_GAP + w > innerWidth) { rows.push(row); row = []; used = 0; }
-		used += row.length ? MIN_GAP + w : w;
-		row.push(entry);
-	}
-	if (row.length) rows.push(row);
-	return rows.map((r) => {
-		if (r.length < 2) return `${DIM}${V}${RESET} ${truncateToWidth(r[0] ?? "", width - 4, "…")} ${DIM}${V}${RESET}`;
-		const content = r.reduce((sum, e) => sum + vw(e), 0);
-		const gaps = r.length - 1;
-		let spare = Math.max(gaps * MIN_GAP, innerWidth - content);
-		let line = `${DIM}${V}${RESET} ${r[0]}`;
-		for (let i = 1; i < r.length; i++) {
-			const pad = Math.ceil(spare / (gaps - i + 1));
-			line += " ".repeat(pad) + r[i];
-			spare -= pad;
-		}
-		return `${line} ${DIM}${V}${RESET}`;
-	});
+// ── render a pair: one item left, one right ───────────────────────────────
+// Each line has exactly one left and one right item, truncated to fit.
+// Left gets ~55%, right ~45%. If right is empty, left fills the line.
+export function renderPair(left: string, right: string, width: number): string {
+	if (!right) return ` ${left}`;
+	const gap = 2;
+	const leftMax = Math.max(10, Math.floor((width - 1 - gap) * 0.55));
+	const rightMax = Math.max(10, width - 1 - gap - leftMax);
+	const l = truncateToWidth(left, leftMax, "…");
+	const r = truncateToWidth(right, rightMax, "…");
+	return ` ${l}${" ".repeat(Math.max(0, leftMax - vw(l)))}${r}`;
 }
 
 function wrapFooter(ui: any): void {
@@ -149,24 +126,45 @@ function wrapFooter(ui: any): void {
 			if (!origRender) return comp;
 			comp.render = (width: number): string[] => {
 				const lines = origRender(width);
-				// Retro box-drawing top border
-				const retro = [`${DIM}${TL}${H.repeat(Math.max(0, width - 2))}${TR}${RESET}`];
+				const retro: string[] = [];
+
+				// Single dim separator
+				retro.push(`${DIM}${H.repeat(Math.max(0, width))}${RESET}`);
+
+				// Line 1: CWD (left) + Context bar (right)
 				try {
+					const cwd = (lines[0] || "").trim();
 					const tag = pluginVersionTag();
-					if (tag && lines.length > 0)
-						retro.push(`${DIM}${V}${RESET} ${truncateToWidth(`${tag} ${lines[0]}`, width - 4, "…")} ${DIM}${V}${RESET}`);
-					else if (lines.length > 0)
-						retro.push(`${DIM}${V}${RESET} ${truncateToWidth(lines[0], width - 4, "…")} ${DIM}${V}${RESET}`);
+					const folder = `${CYAN}${FOLDER}${RESET}`;
+					const left1 = tag ? `${tag}  ${folder}  ${cwd}` : `${folder}  ${cwd}`;
+					const statuses = footerData?.getExtensionStatuses?.();
+					const contextRaw = statuses?.get("context") || "";
+					const meta = META["context"];
+					const right1 = contextRaw ? `${meta.color}${meta.icon}${RESET} ${contextRaw}` : "";
+					retro.push(renderPair(left1, right1, width));
 				} catch { /* best-effort */ }
+
+				// Line 2: pi's stats line (tokens+cost left, model right — already a pair)
+				try {
+					if (lines.length > 1 && lines[1].trim())
+						retro.push(` ${lines[1]}`);
+				} catch { /* best-effort */ }
+
+				// Lines 3+: Extension pairs (context excluded, shown on line 1)
 				try {
 					const statuses = footerData?.getExtensionStatuses?.();
-					if (width > 0 && statuses && statuses.size > 0) {
-						const rows = buildStatusRows(statuses, width);
-						retro.push(...rows);
+					if (statuses && statuses.size > 0) {
+						const exts = Array.from(statuses.entries())
+							.filter(([key]) => !VOLATILE.has(key) && key !== "context")
+							.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b));
+						for (let i = 0; i < exts.length; i += 2) {
+							const left = paintStatus(exts[i][0], exts[i][1]);
+							const right = exts[i + 1] ? paintStatus(exts[i + 1][0], exts[i + 1][1]) : "";
+							retro.push(renderPair(left, right, width));
+						}
 					}
-				} catch { /* keep open-tui's lines on surprise */ }
-				// Bottom border
-				retro.push(`${DIM}${BL}${H.repeat(Math.max(0, width - 2))}${BR}${RESET}`);
+				} catch { /* best-effort */ }
+
 				return retro;
 			};
 			return comp;

@@ -69,7 +69,7 @@ writeFileSync(
 );
 
 // Copy extension files
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "slot.ts", "questionnaire.ts", "colors.ts", "retro.ts"])
+for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "slot.ts", "questionnaire.ts", "colors.ts", "retro.ts", "context.ts"])
 	writeFileSync(join(SCRATCH, "extensions", part), readFileSync(join(ROOT, "extensions", part), "utf8"));
 
 const results = [];
@@ -309,7 +309,7 @@ await fire(stylePi, "agent_end", { messages: [usage] }, teleCtx);
 const teleLine = widgetText(teleWidget);
 check("starship telemetry: TTFT", /ttft/.test(teleLine));
 check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
-check("starship telemetry: chevron-separated", teleLine.includes("▶"));
+check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 
 // ── billboard — the one info surface ──
 // Driven through installBillboard directly: the panel owns the only
@@ -350,8 +350,7 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	const active = (ui) => [...ui.overlays].reverse().find((o) => !o.closed);
 	const lastW = (ui) => ui.widgetCalls[ui.widgetCalls.length - 1];
 	const noAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "");
-	// The strip is a component factory now (bordered, like every other pi-ui
-	// widget); the border row is not content.
+	// The strip is a component factory now; the border was removed as it added
 	const strip = (ui) => {
 		const c = lastW(ui)?.lines;
 		if (typeof c !== "function") return [];
@@ -696,6 +695,23 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	check("enter does not submit while unanswered", s.ctx.live.component !== null && s.view().includes("unanswered:"));
 	s.feed("escape");
 	await s.p;
+}
+
+// ── status bar render pair at 40/80/200 ──
+// The subject is chrome's own renderPair, imported — a local reimplementation
+// of the same arithmetic would pass no matter what chrome.ts does.
+{
+	const { renderPair } = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
+	const vis = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+	const testPair = (left, right, width) => vis(renderPair(left, right, width)).length <= width;
+	[
+		[40, "~/dev/_pi_extensions", "████████░░ 73%"],
+		[40, "0.3.9    ~/dev/_pi_extensions", " ████████░░ 73%"],
+		[80, "0.3.9    ~/dev/_pi_extensions (main) • session-42", " ████████░░ 73%"],
+		[80, "↑1.5k ↓2.3k $0.045", "claude-3.5-sonnet • thinking off"],
+		[200, "0.3.9    ~/dev/_pi_extensions/subdir/src (feature-branch)", " ████████████████████████░░░░ 95%"],
+	].forEach(([w, l, r]) => check(`pair fits at ${w}: ${l.slice(0, 20)}…`, testPair(l, r, w)));
+	check("pair with no right fits at 40", testPair("0.3.9    ~/dev", "", 40));
 }
 
 for (const line of results) console.log(line);
