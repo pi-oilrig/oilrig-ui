@@ -375,13 +375,19 @@ check("starship telemetry: chevron-separated", teleLine.includes("▶"));
 	check("min strip is a bordered component", typeof w0?.lines === "function");
 	check("min strip is one packed line", strip(bui).length === 1);
 
-	// alt+p toggles max (overlay) and back
-	const sc = pi.shortcuts.get("alt+p");
-	check("billboard shortcut is alt+p", !!sc);
+	// alt+l toggles max (overlay) and back. Not alt+p: `ESC p` is also
+	// pi-tui's alt+up, so the built-in app.message.dequeue swallowed it and
+	// the handler never ran. Not ctrl+l either — reserved, skipped outright.
+	const sc = pi.shortcuts.get("alt+l");
+	check("billboard shortcut is alt+l", !!sc);
+	check(
+		"billboard claims no key whose ESC sequence pi-tui has already taken",
+		!["alt+p", "alt+b", "alt+f", "alt+n", "ctrl+l"].some((k) => pi.shortcuts.has(k)),
+	);
 	await sc.handler({ ui: bui });
 	const ov = active(bui);
-	check("alt+p opens a non-capturing overlay", !!ov && ov.options?.overlayOptions?.()?.nonCapturing === true);
-	check("max render is multi-line and names alt+p", maxLines(ov).length > 1 && maxLines(ov).some((l) => l.includes("alt+p")));
+	check("alt+l opens a non-capturing overlay", !!ov && ov.options?.overlayOptions?.()?.nonCapturing === true);
+	check("max render is multi-line and names alt+l", maxLines(ov).length > 1 && maxLines(ov).some((l) => l.includes("alt+l")));
 	ov.component.handleInput("\x1b");
 	check("Esc closes back to min", !active(bui));
 	await sc.handler({ ui: bui });

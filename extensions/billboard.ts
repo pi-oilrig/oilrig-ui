@@ -2,7 +2,7 @@
 // belowEditor widget or an info overlay registers a *slot* here instead:
 //
 //   min  — the belowEditor widget: title + every `row` slot, packed to width.
-//   max  — a full-screen overlay (alt+p): every slot's card body, sectioned,
+//   max  — a full-screen overlay (alt+l): every slot's card body, sectioned,
 //          scrollable, with Tab cycling focus through interactive slots.
 //
 // One widget key, one overlay, one keybinding table. Before this there were
@@ -17,7 +17,7 @@
 //
 // No clock, no per-frame cost: the widget is message-bound (agent_settled,
 // message_end, turn_end) plus explicit repaint(), and the overlay exists only
-// between two alt+p presses.
+// between two alt+l presses.
 
 import { DynamicBorder, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
@@ -308,7 +308,7 @@ function renderMax(
 	if (!any) body.push("  (nothing to show — register a slot)");
 
 	// Header: the title, then the live key legend for the state we are in.
-	const hints = [state.focus ? "Esc leave" : "Esc / alt+p close"];
+	const hints = [state.focus ? "Esc leave" : "Esc / alt+l close"];
 	if (focusable.length) hints.push("Tab focus");
 	const view = Math.max(1, height - 2);
 	if (body.length > view) hints.push("j/k PgUp/PgDn g scroll");
@@ -643,9 +643,29 @@ export function installBillboard(pi: ExtensionAPI): void {
 			delete (globalThis as any).__billboard;
 	});
 
-	// ── shortcut: alt+p (billboard / panel) ────────────────────
+	// ── shortcut: alt+l ────────────────────────────────────────
+	// Fourth key, and the reasoning is worth keeping so there is no fifth.
+	// A shortcut has to clear three separate hurdles here:
+	//
+	//   1. Not on pi's RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS list. A
+	//      reserved key is not merely warned about — getShortcuts() *skips*
+	//      the registration outright. That rules out ctrl+l, which is
+	//      app.model.select.
+	//   2. Not already a built-in in pi's or pi-tui's keybinding tables, or we
+	//      shadow a real editing key and print a conflict warning every start.
+	//      alt+b went this way — tui.editor.cursorWordLeft.
+	//   3. Its *escape sequence* must not be claimed by something else in
+	//      pi-tui's LEGACY_SEQUENCES table. This is the subtle one, and it is
+	//      what killed alt+p: the terminal sends `ESC p`, and keys.js maps
+	//      "\x1bp" to "alt+up" (emacs readline history). `ESC p` therefore
+	//      matches both alt+p and alt+up, the built-in app.message.dequeue
+	//      wins, and our handler is never reached — no warning, no error,
+	//      nothing happens. \x1bb, \x1bf and \x1bn are booby-trapped alike.
+	//
+	// alt+l clears all three: `ESC l` matches alt+l and nothing else.
+	// .preventions/checks/reachable-shortcuts.sh enforces this from now on.
 	if (typeof (pi as any).registerShortcut === "function") {
-		(pi as any).registerShortcut("alt+p", {
+		(pi as any).registerShortcut("alt+l", {
 			description: "Toggle billboard (min ↔ max)",
 			handler: (_ctx: any) => toggle(),
 		});

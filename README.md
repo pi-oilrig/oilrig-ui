@@ -15,7 +15,7 @@ Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
 | **chrome** | Suppresses open-tui welcome header, silences ponytail toast/status, wraps footer with colored extension-status rows + version tag. |
 | **starship** | Session telemetry — duration, turns, TPS, TTFT, tokens, stalls. Not a widget of its own: it is the first **billboard** slot (one line in the strip, a broken-out card with the in/out split in the overlay). |
 | **questionnaire** | The `questionnaire` tool: the agent asks one or more questions in an overlay. Each question is briefed — `problem` (what is being decided and why it came up), `explanation` (what separates the options) and `recommendation` (why the starred option) render above the list, so the user answers with context. One option is marked `recommended` (★, pre-selected); the user picks it, rewrites it (`c`) or writes their own. The answer carries *how* it was reached — picked / added / replaced — so a rewritten recommendation reads as a rewrite, not a bare string. |
-| **billboard** | **The one info surface.** A min strip in the only `belowEditor` widget, a max overlay on `alt+p` / `/billboard`. Every package that used to own a widget or an info overlay registers a slot here instead — see below. |
+| **billboard** | **The one info surface.** A min strip in the only `belowEditor` widget, a max overlay on `alt+l` / `/billboard`. Every package that used to own a widget or an info overlay registers a slot here instead — see below. |
 
 ## The billboard is the only widget
 
@@ -29,7 +29,7 @@ info overlays and stay as modals.
 | Mode | What | Key |
 |------|------|-----|
 | **min** | The widget: the title, then every `row` slot, packed to the terminal width across as many lines as they need. | default |
-| **max** | Full-width overlay: every slot's card body, sectioned by title, scrollable, with `Tab` cycling focus through interactive slots. | `alt+p` |
+| **max** | Full-width overlay: every slot's card body, sectioned by title, scrollable, with `Tab` cycling focus through interactive slots. | `alt+l` |
 
 The **title heads both renders** (`/billboard title <text>`, or
 `globalThis.__billboard.setTitle()` — gantt sets it to its board URL, plain text
@@ -93,7 +93,7 @@ data in the status bar.
 | `↑` (empty) | Previous prompts this session |
 | `shift+↑` (empty) | Fuzzy history menu — all sessions |
 | `ctrl+r` | Fuzzy history menu — anywhere; type to filter, ↑/↓ to move, enter/tab to insert, escape to close |
-| `alt+p` | Toggle the billboard panel (min strip ↔ max overlay) |
+| `alt+l` | Toggle the billboard panel (min strip ↔ max overlay) |
 | `tab` (max) | Cycle focus through interactive slots; `shift+tab` back |
 | `j` `k` / `↑` `↓` / `PgUp` `PgDn` / `g` (max) | Scroll the overlay when it overflows |
 | `escape` (max) | Leave the focused slot, then close the panel; `q` closes outright |
