@@ -387,7 +387,7 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	);
 	await sc.handler({ ui: bui });
 	const ov = active(bui);
-	check("f2 opens a non-capturing overlay", !!ov && ov.options?.overlayOptions?.()?.nonCapturing === true);
+	check("f2 opens a capturing overlay", !!ov && ov.options?.overlayOptions?.()?.nonCapturing === false);
 	check("max render is multi-line and names f2", maxLines(ov).length > 1 && maxLines(ov).some((l) => l.includes("f2")));
 	ov.component.handleInput("\x1b");
 	check("Esc closes back to min", !active(bui));

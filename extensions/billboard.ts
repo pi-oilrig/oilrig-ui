@@ -438,7 +438,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 		}
 	}
 
-	function openOverlay(): void {
+	function openOverlay(focusId?: string): void {
 		if (overlayDone || !ui?.custom) return;
 		void ui.custom(
 			(t: any, _theme: any, _kb: any, done: (v: null) => void) => {
@@ -453,13 +453,24 @@ export function installBillboard(pi: ExtensionAPI): void {
 			{
 				overlay: true,
 				overlayOptions: () => ({
-					anchor: "top-center" as const,
-					width: "100%" as const,
-					maxHeight: "100%" as const,
-					nonCapturing: true,
+					anchor: "cursor" as const,
+					width: 60,
+					maxHeight: 20,
+					nonCapturing: false,
 				}),
 			},
 		);
+		// If a focusId is provided and the slot exists, focus it.
+		// Otherwise, focus the first focusable slot.
+		if (focusId && registry.has(focusId)) {
+			setFocus(focusId);
+		} else {
+			// Focus the first focusable slot, if any.
+			const first = focusables()[0];
+			if (first) {
+				setFocus(first.id);
+			}
+		}
 	}
 
 	function closeOverlay(): void {
