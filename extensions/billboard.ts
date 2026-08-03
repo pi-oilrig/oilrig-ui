@@ -239,6 +239,7 @@ function renderMin(
 	state: State,
 	reg: Map<string, Slot>,
 	width: number,
+	withHead = true,
 ): string[] {
 	const SEP = "  ";
 	const segs: string[] = [];
@@ -266,6 +267,9 @@ function renderMin(
 	if (cur && lines.length < MIN_ROWS_MAX) lines.push(cur);
 	// The title heads the first line and is the one bold thing in the strip.
 	const out = lines.length ? lines : [""];
+	// The overlay carries the title in its own header, so it asks for the
+	// segments bare rather than repeating the title two lines apart.
+	if (!withHead) return out.filter(Boolean).map((l) => `${WHITE}${l}${RESET}`);
 	return out.map((l, i) =>
 		i === 0
 			? `${WHITE}${BOLD}${head}${RESET}${WHITE}${l ? SEP + l : ""}${RESET}`
@@ -287,6 +291,10 @@ function renderMax(
 	const slots = activeSlots(reg, state.hidden);
 	const focusable = slots.filter((s) => s.focusable);
 	const inner = Math.max(20, width - 2);
+	// The strip the overlay covers up, reprinted at the top of it: opening the
+	// panel must never take information off the screen, and the row slots are
+	// the one live line a reader tracks from message to message.
+	const strip = renderMin(state, reg, inner, false);
 	const body: string[] = [];
 	let any = false;
 	for (const slot of slots) {
@@ -310,7 +318,7 @@ function renderMax(
 	// Header: the title, then the live key legend for the state we are in.
 	const hints = [state.focus ? "Esc leave" : "Esc / f2 close"];
 	if (focusable.length) hints.push("Tab focus");
-	const view = Math.max(1, height - 2);
+	const view = Math.max(1, height - 2 - strip.length - (strip.length ? 1 : 0));
 	if (body.length > view) hints.push("j/k PgUp/PgDn g scroll");
 	const title = mono(state.title || "billboard");
 	const header = `${BOLD}${title}${RESET}${WHITE}  ${hints.join("  ·  ")}`;
@@ -319,7 +327,8 @@ function renderMax(
 	if (state.scroll > max) state.scroll = max;
 	if (state.scroll < 0) state.scroll = 0;
 	const slice = body.slice(state.scroll, state.scroll + view);
-	const out = [header, "\u2500".repeat(width), ...slice];
+	// header · the min strip · rule · the section bodies
+	const out = [header, ...strip, "\u2500".repeat(width), ...slice];
 	if (max > 0)
 		out.push(`  ${state.scroll + slice.length}/${body.length}`);
 	return out.map((l) => `${WHITE}${padTo(l, width)}${RESET}`);

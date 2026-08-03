@@ -430,6 +430,12 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	await sc.handler({ ui: bui }); // → min
 	check("external row slot in min strip", strip(bui).join(" ").includes("branch: main"));
 	await sc.handler({ ui: bui }); // → max
+	// The overlay reprints the min strip under its header: opening the panel
+	// must not take the live row slots off the screen.
+	const withStrip = maxLines(active(bui));
+	check("max overlay reprints the min strip", withStrip.slice(0, 3).some((l) => l.includes("branch: main")), withStrip.slice(0, 3).join(" | "));
+	check("the reprinted strip does not repeat the title", withStrip.slice(1, 3).every((l) => !l.includes("http://localhost:3333/proj-abc123")), withStrip.slice(1, 3).join(" | "));
+	check("the rule still separates strip from sections", withStrip.some((l) => /^\u2500+$/.test(l.trim())));
 	await pi.command.handler("hide stats", { ui: bui });
 	check("hidden slot suppressed", !maxLines(ov2).some((l) => l.includes("cpu: 42%")));
 	await pi.command.handler("show stats", { ui: bui });
@@ -472,7 +478,12 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	// A row slot may differ from its card body — starship's one-liner vs its
 	// broken-out detail.
 	api.register({ id: "two-faced", title: "two", priority: 250, size: "row", row: () => ["SHORT"], render: () => ["LONG DETAIL"] });
-	check("card body used in max", maxLines(ov2).some((l) => l.includes("LONG DETAIL")) && !maxLines(ov2).some((l) => l.includes("SHORT")));
+	// In max the two halves show in two places: the `row` body only in the
+	// reprinted strip above the rule, the card body only in the sections below.
+	const faces = maxLines(ov2);
+	const rule = faces.findIndex((l) => /^\u2500+$/.test(l.trim()));
+	check("card body used in the max sections", faces.slice(rule).some((l) => l.includes("LONG DETAIL")) && !faces.slice(rule).some((l) => l.includes("SHORT")));
+	check("row body used in the reprinted strip", faces.slice(0, rule).some((l) => l.includes("SHORT")));
 	await sc.handler({ ui: bui }); // → min
 	check("row body used in min", strip(bui).join(" ").includes("SHORT") && !strip(bui).join(" ").includes("LONG DETAIL"));
 	await sc.handler({ ui: bui }); // → max
