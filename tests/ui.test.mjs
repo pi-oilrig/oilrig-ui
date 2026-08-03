@@ -312,9 +312,8 @@ check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
 check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 
 // ── billboard — the one info surface ──
-// Driven through installBillboard directly: the panel owns the only
-// belowEditor widget, the only info overlay and the slot registry, none of
-// which the style/editor stubs supply.
+// The min strip writes directly to line 1 of the terminal (stdout),
+// bypassing the widget system. The max overlay still uses ui.custom.
 {
 	const { installBillboard } = await import(pathToFileURL(join(SCRATCH, "extensions/billboard.ts")).href);
 	const makeBoardPi = () => {
@@ -331,10 +330,9 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	};
 	const makeBoardUi = () => {
 		const overlays = [];
-		const widgetCalls = [];
 		const tui = { renders: 0, requestRender() { this.renders++; } };
 		return {
-			overlays, widgetCalls, tui, notes: [],
+			overlays, tui, notes: [],
 			custom(factory, opts) {
 				const rec = { options: opts, closed: false };
 				return new Promise((resolve) => {
@@ -343,42 +341,29 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 					overlays.push(rec);
 				});
 			},
-			setWidget(key, lines, opts) { widgetCalls.push({ key, lines, opts }); },
+			setWidget() {},
 			notify(msg, type) { this.notes.push({ msg, type }); },
 		};
 	};
 	const active = (ui) => [...ui.overlays].reverse().find((o) => !o.closed);
-	const lastW = (ui) => ui.widgetCalls[ui.widgetCalls.length - 1];
 	const noAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "");
-	// The strip is a component factory now; the border was removed as it added
-	const strip = (ui) => {
-		const c = lastW(ui)?.lines;
-		if (typeof c !== "function") return [];
-		return c({}, { fg: (_k, t) => t })
-			.render(80)
-			.map((l) => noAnsi(l).trim())
-			.filter((l) => l && !/^-+$/.test(l));
-	};
 	const maxLines = (ov) => ov.component.render(80).map(noAnsi);
-	// the same overlay body with its escapes intact — the monochrome checks
-	// below are *about* the escapes, so they cannot read the stripped view
 	const maxRaw = (ov) => ov.component.render(80);
 
-	// min widget on session_start
+	// Read the strip content directly from globalThis.__billboardStrip,
+	// set by repaint() on every write. Strip ANSI for plain-text assertions.
+	const stripLines = () => (globalThis.__billboardStrip ?? []).map((l) => noAnsi(l).trim()).filter((l) => l.length > 0);
+
+	// min strip on session_start
 	const pi = makeBoardPi();
 	const bui = makeBoardUi();
 	installBillboard(pi);
 	await pi.fire("session_start", {}, { ui: bui });
-	const w0 = lastW(bui);
-	check("billboard owns the belowEditor widget", w0?.key === "billboard" && w0.opts?.placement === "belowEditor");
-	check("min strip is a bordered component", typeof w0?.lines === "function");
-	check("min strip is one packed line", strip(bui).length === 1);
+	const s0 = stripLines();
+	check("min strip is one packed line", s0.length === 1);
+	check("default head is the panel name", s0[0]?.startsWith("billboard"));
 
-	// f2 toggles max (overlay) and back. Not alt+anything — the window
-	// manager eats alt before pi sees it. Not alt+p in particular: `ESC p` is
-	// also pi-tui's alt+up, so app.message.dequeue swallowed it. Not ctrl+l —
-	// reserved, skipped outright. Not ctrl+shift+* or ctrl+<digit> — those
-	// need the kitty protocol.
+	// f2 toggles max (overlay) and back.
 	const sc = pi.shortcuts.get("f2");
 	check("billboard shortcut is f2", !!sc);
 	check(
@@ -395,13 +380,11 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	active(bui).component.handleInput("q");
 	check("q closes too", !active(bui));
 
-	// title/items round trip, min + max. The title is the HEAD of the strip and
-	// of the overlay header — gantt puts its board URL there, so it must not be
-	// pushed off by another slot.
-	check("default head is the panel name", strip(bui)[0].startsWith("billboard"));
+	// title/items round trip, min + max.
 	await pi.command.handler("title myproject", { ui: bui });
-	check("title replaces the head of the min strip", strip(bui)[0].startsWith("myproject"));
-	check("title is not also printed as a slot", strip(bui)[0].split("myproject").length === 2);
+	const s1 = stripLines();
+	check("title replaces the head of the min strip", s1[0]?.startsWith("myproject"));
+	check("title is not also printed as a slot", s1[0].split("myproject").length === 2);
 	await pi.command.handler("add first task", { ui: bui });
 	await pi.command.handler("add second task", { ui: bui });
 	await sc.handler({ ui: bui });
@@ -412,8 +395,7 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	const cleared = maxLines(ov2);
 	check("clear drops completed, keeps open", !cleared.some((l) => l.includes("first task")) && cleared.some((l) => l.includes("second task")));
 
-	// A mutation while the overlay is up must reach the tui, not just the
-	// (invisible) strip — repaint() used to dead-end in max mode.
+	// A mutation while the overlay is up must reach the tui.
 	const before = bui.tui.renders;
 	await pi.command.handler("add third task", { ui: bui });
 	check("mutating in max mode re-renders the overlay", bui.tui.renders > before);
@@ -428,10 +410,9 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	check("external card slot renders", maxLines(ov2).some((l) => l.includes("cpu: 42%")));
 	api.register({ id: "branch", priority: 15, size: "row", render: () => ["branch: main"] });
 	await sc.handler({ ui: bui }); // → min
-	check("external row slot in min strip", strip(bui).join(" ").includes("branch: main"));
+	check("external row slot in min strip", stripLines().join(" ").includes("branch: main"));
 	await sc.handler({ ui: bui }); // → max
-	// The overlay reprints the min strip under its header: opening the panel
-	// must not take the live row slots off the screen.
+	// The overlay reprints the min strip under its header.
 	const withStrip = maxLines(active(bui));
 	check("max overlay reprints the min strip", withStrip.slice(0, 3).some((l) => l.includes("branch: main")), withStrip.slice(0, 3).join(" | "));
 	check("the reprinted strip does not repeat the title", withStrip.slice(1, 3).every((l) => !l.includes("http://localhost:3333/proj-abc123")), withStrip.slice(1, 3).join(" | "));
@@ -485,7 +466,7 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	check("card body used in the max sections", faces.slice(rule).some((l) => l.includes("LONG DETAIL")) && !faces.slice(rule).some((l) => l.includes("SHORT")));
 	check("row body used in the reprinted strip", faces.slice(0, rule).some((l) => l.includes("SHORT")));
 	await sc.handler({ ui: bui }); // → min
-	check("row body used in min", strip(bui).join(" ").includes("SHORT") && !strip(bui).join(" ").includes("LONG DETAIL"));
+	check("row body used in min", stripLines().join(" ").includes("SHORT") && !stripLines().join(" ").includes("LONG DETAIL"));
 	await sc.handler({ ui: bui }); // → max
 	api.unregister("two-faced");
 
@@ -536,23 +517,31 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	api.unregister("tall");
 	ov5.component.handleInput("\x1b");
 
-	// An unchanged frame must not cost a setWidget — launch ticks every 2s and
-	// until every 5s through this same entry point.
+	// An unchanged frame must still write to stdout — launch ticks every 2s
+	// and until every 5s through this same entry point, and the terminal
+	// scroll on each new message would push a cached frame out of place.
 	{
-		const n = bui.widgetCalls.length;
+		let writes = 0;
+		const prev = process.stdout.write;
+		process.stdout.write = (chunk, enc, cb) => {
+			writes++;
+			if (cb) cb();
+			return true;
+		};
 		api.repaint();
 		api.repaint();
-		check("an unchanged repaint still re-renders the widget (offset fix)", bui.widgetCalls.length > n);
+		process.stdout.write = prev;
+		check("an unchanged repaint still writes to stdout (offset fix)", writes === 2);
 	}
 
 	// turn counter — the strip only repaints in min mode
 	await pi.fire("turn_end", {}, {});
 	await pi.fire("turn_end", {}, {});
-	check("turn count in min strip", strip(bui).join(" ").includes("turn 2"));
+	check("turn count in min strip", stripLines().join(" ").includes("turn 2"));
 
-	// shutdown clears overlay, widget and the global
+	// shutdown clears overlay and the global registry
 	await pi.fire("session_shutdown", {}, {});
-	check("shutdown closes overlay + clears widget + registry", !active(bui) && lastW(bui)?.lines === undefined && globalThis.__billboard === undefined);
+	check("shutdown closes overlay + clears registry", !active(bui) && globalThis.__billboard === undefined);
 
 	// pending queue: a package whose install beats ui's registers into
 	// globalThis.__billboardPending and the panel drains it.
@@ -561,7 +550,7 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	const bui2 = makeBoardUi();
 	installBillboard(pi2);
 	await pi2.fire("session_start", {}, { ui: bui2 });
-	check("pending slots are drained on install", strip(bui2).join(" ").includes("EARLY"));
+	check("pending slots are drained on install", stripLines().join(" ").includes("EARLY"));
 	check("pending queue is emptied", globalThis.__billboardPending.length === 0);
 	await pi2.fire("session_shutdown", {}, {});
 }

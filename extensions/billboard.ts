@@ -20,7 +20,6 @@
 // between two f2 presses.
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Container, Text } from "@earendil-works/pi-tui";
 
 type SlotSize = "row" | "card";
 type Mode = "min" | "max";
@@ -338,7 +337,6 @@ function renderMax(
 export function installBillboard(pi: ExtensionAPI): void {
 	let ui: any;
 	let tui: any;
-	const WIDGET_KEY = "billboard";
 	const state: State = {
 		title: "",
 		items: [],
@@ -351,8 +349,8 @@ export function installBillboard(pi: ExtensionAPI): void {
 	};
 	const registry = new Map<string, Slot>();
 
-	// ── cache: only call setWidget when content actually changes ─────
-	let lastContent: string | null = null;
+	// ── track previous line count to clear stale lines on resize ─────
+	let lastLineCount = 0;
 
 	// ── overlay for max mode (created only when toggled) ─────────────
 	let overlayDone: ((v: null) => void) | undefined;
@@ -484,32 +482,32 @@ export function installBillboard(pi: ExtensionAPI): void {
 	}
 
 	// ── the one repaint entry point ─────────────────────────────────
-	// min repaints the widget, max asks the tui to re-render the overlay.
-	// Everything that mutates slot state calls this and nothing else.
-	// When a new agent message arrives, the terminal scrolls and the
-	// belowEditor widget gets pushed down. To prevent flicker, we always
-	// re-render the widget (no content cache) so the offset is corrected
-	// immediately on the same frame.
+	// min writes the strip directly to line 1 of the terminal, bypassing
+	// the widget system entirely. This keeps it pinned as the first visual
+	// line regardless of editor scroll or widget placement.
+	// max asks the tui to re-render the overlay.
 	function repaint(): void {
 		if (state.mode === "max") {
 			tui?.requestRender?.();
 			return;
 		}
-		if (!ui) return;
 		const width = process.stdout.columns ?? 80;
 		const lines = renderMin(state, registry, width);
-		const rendered = lines.join("\n");
-		// Always re-render to fix offset after terminal scroll — no cache.
-		lastContent = rendered;
-		ui.setWidget?.(
-			WIDGET_KEY,
-			() => {
-				const c = new Container();
-				for (const l of lines) c.addChild(new Text(` ${l}`, 1, 0));
-				return c;
-			},
-			{ placement: "belowEditor" },
-		);
+		// Save cursor, move to (1,1), print each line, clear stale lines,
+		// restore cursor — all in one write to avoid flicker.
+		const out: string[] = [];
+		out.push("\x1b7"); // DECSC: save cursor
+		out.push("\x1b[1;1H"); // CUP: row 1 col 1
+		for (let i = 0; i < Math.max(lines.length, lastLineCount); i++) {
+			const l = i < lines.length ? ` ${lines[i]}` : "";
+			out.push(`${l}\x1b[K`); // EL: clear to end of line
+			if (i < Math.max(lines.length, lastLineCount) - 1) out.push("\n");
+		}
+		out.push("\x1b8"); // DECRC: restore cursor
+		process.stdout.write(out.join(""));
+		lastLineCount = lines.length;
+		// Expose for testing — read by the test suite to verify strip content.
+		(globalThis as any).__billboardStrip = lines;
 	}
 
 	function toggle(): void {
@@ -518,7 +516,6 @@ export function installBillboard(pi: ExtensionAPI): void {
 			state.mode = "min";
 			state.scroll = 0;
 			closeOverlay();
-			lastContent = null;
 			repaint();
 		} else {
 			state.mode = "max";
@@ -630,7 +627,6 @@ export function installBillboard(pi: ExtensionAPI): void {
 		ui = ctx.ui ?? ui;
 		const late = (globalThis as any).__billboardPending;
 		if (Array.isArray(late)) for (const s of late.splice(0)) api.register(s);
-		lastContent = null;
 		repaint();
 	});
 
@@ -663,7 +659,6 @@ export function installBillboard(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", () => {
 		closeOverlay();
-		ui?.setWidget?.(WIDGET_KEY, undefined);
 		if ((globalThis as any).__billboard === api)
 			delete (globalThis as any).__billboard;
 	});
