@@ -242,58 +242,41 @@ await wrapped.getSuggestions([""], 0, 0, {});
 check("escape disarms history mode", baseProvider.calls === 1);
 
 // ── starship ──
-const themeStub = { fg: (k, t) => t };
-const widgetText = (content) => {
-	if (typeof content === "function") {
-		const comp = content({}, themeStub);
-		return (comp && comp.render ? comp.render(80) : []).join(" ");
-	}
-	return Array.isArray(content) ? content.join(" ") : "";
-};
-let widgetSet = false;
-let statusSet = false;
+// starship registers a billboard slot (priority 70) at extension load via
+// registerSlot — it no longer calls ctx.ui.setWidget. installBillboard runs
+// before installStarship in index.ts, so the slot is in the live
+// globalThis.__billboard registry; grab it and assert against its row()
+// closure, which reflects live telemetry state.
+const starSlot = globalThis.__billboard?.list()?.find((s) => s && s.id === "starship");
+check("starship slot registered", !!starSlot && typeof starSlot.row === "function" && starSlot.priority === 70);
+
 const starCtx = {
 	mode: "tui",
 	model: { id: "test-model" },
 	projectRoot: "/tmp",
 	sessionManager: { getBranch: () => [{ type: "message", message: { role: "assistant", usage: { input: 100, output: 50 } } }] },
-	ui: {
-		setEditorComponent: () => {},
-		setWidget: (...args) => { widgetSet = true; },
-		setStatus: (...args) => { statusSet = true; },
-		setFooter: () => {},
-		notify: () => {},
-		setHeader: () => {},
-		theme: { fg },
-		keybindings: {},
-	},
 };
 await fire(stylePi, "session_start", {}, starCtx);
 await fire(stylePi, "agent_settled", {}, starCtx);
-check("starship widget set", widgetSet);
 
-// Regression: with zero tokens and no git branch the widget must STILL render
+// Regression: with zero tokens and no git branch the slot must STILL render
 // (session-duration anchor) — dropping the model segment used to collapse it to
 // empty → early return → no session line after a response.
-let bareWidget = null;
 const bareCtx = {
 	mode: "tui",
 	projectRoot: "/nonexistent-xyzzy-" + Date.now(),
 	sessionManager: { getBranch: () => [] },
-	ui: { ...starCtx.ui, setWidget: (k, lines) => { bareWidget = lines; } },
 };
 await fire(stylePi, "session_start", {}, bareCtx);
 await fire(stylePi, "agent_settled", {}, bareCtx);
-check("starship renders a line with no tokens/branch", widgetText(bareWidget).trim().length > 0);
+check("starship renders a line with no tokens/branch", starSlot.row(80).join(" ").trim().length > 0);
 
 // Full telemetry: drive a streamed message + turn, assert TPS/TTFT/tokens/turns.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let teleWidget = null;
 const teleCtx = {
 	mode: "tui",
 	projectRoot: "/tmp",
 	sessionManager: { getBranch: () => [] },
-	ui: { ...starCtx.ui, setWidget: (k, l) => { teleWidget = l; } },
 };
 const usage = { role: "assistant", usage: { input: 1000, output: 500 } };
 await fire(stylePi, "session_start", {}, teleCtx);
@@ -303,10 +286,10 @@ await fire(stylePi, "message_update", {}, teleCtx); // first token
 await sleep(70);
 await fire(stylePi, "message_update", {}, teleCtx);
 await fire(stylePi, "message_end", { message: usage }, teleCtx);
-const afterMsg = widgetText(teleWidget);
+const afterMsg = starSlot.row(80).join(" ");
 check("starship renders after each message (message_end)", /tps/.test(afterMsg) && /tok\/s/.test(afterMsg));
 await fire(stylePi, "agent_end", { messages: [usage] }, teleCtx);
-const teleLine = widgetText(teleWidget);
+const teleLine = starSlot.row(80).join(" ");
 check("starship telemetry: TTFT", /ttft/.test(teleLine));
 check("starship telemetry: token count 1.5k", /1\.5k/.test(teleLine));
 check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
