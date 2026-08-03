@@ -542,7 +542,7 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 		const n = bui.widgetCalls.length;
 		api.repaint();
 		api.repaint();
-		check("an unchanged repaint does not touch the widget", bui.widgetCalls.length === n);
+		check("an unchanged repaint still re-renders the widget (offset fix)", bui.widgetCalls.length > n);
 	}
 
 	// turn counter — the strip only repaints in min mode

@@ -401,6 +401,8 @@ export function installBillboard(pi: ExtensionAPI): void {
 		if (state.focus) {
 			if (data === "\t") return cycleFocus(false);
 			if (data === "\x1b[Z") return cycleFocus(true);
+			if (data === "\x1b[B" || data === "\x1bOB") return cycleFocus(false);
+			if (data === "\x1b[A" || data === "\x1bOA") return cycleFocus(true);
 			const slot = registry.get(state.focus);
 			if (slot?.onInput?.(data)) {
 				repaint();
@@ -412,15 +414,17 @@ export function installBillboard(pi: ExtensionAPI): void {
 		}
 		if (data === "\t") return cycleFocus(false);
 		if (data === "\x1b[Z") return cycleFocus(true);
+		if (data === "\x1b[B" || data === "\x1bOB") return cycleFocus(false);
+		if (data === "\x1b[A" || data === "\x1bOA") return cycleFocus(true);
 		if (data === "\x1b" || data === "\x1bp" || data === "\x03" || data === "q") {
 			toggle();
 			return;
 		}
-		if (data === "j" || data === "\x1b[B") {
+		if (data === "j") {
 			state.scroll++;
 			return repaint();
 		}
-		if (data === "k" || data === "\x1b[A") {
+		if (data === "k") {
 			state.scroll = Math.max(0, state.scroll - 1);
 			return repaint();
 		}
@@ -453,7 +457,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 			{
 				overlay: true,
 				overlayOptions: () => ({
-					anchor: "cursor" as const,
+					anchor: "top-center" as const,
 					width: 60,
 					maxHeight: 20,
 					nonCapturing: false,
@@ -482,6 +486,10 @@ export function installBillboard(pi: ExtensionAPI): void {
 	// ── the one repaint entry point ─────────────────────────────────
 	// min repaints the widget, max asks the tui to re-render the overlay.
 	// Everything that mutates slot state calls this and nothing else.
+	// When a new agent message arrives, the terminal scrolls and the
+	// belowEditor widget gets pushed down. To prevent flicker, we always
+	// re-render the widget (no content cache) so the offset is corrected
+	// immediately on the same frame.
 	function repaint(): void {
 		if (state.mode === "max") {
 			tui?.requestRender?.();
@@ -491,7 +499,7 @@ export function installBillboard(pi: ExtensionAPI): void {
 		const width = process.stdout.columns ?? 80;
 		const lines = renderMin(state, registry, width);
 		const rendered = lines.join("\n");
-		if (rendered === lastContent) return;
+		// Always re-render to fix offset after terminal scroll — no cache.
 		lastContent = rendered;
 		ui.setWidget?.(
 			WIDGET_KEY,
