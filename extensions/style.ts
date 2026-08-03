@@ -75,6 +75,7 @@ function injectSubagentTasks(input: any): void {
 
 export function installStyle(pi: ExtensionAPI): void {
 	let active = true;
+	let doctrineSent = false;
 
 	pi.on("input", async (event: any) => {
 		try {
@@ -89,11 +90,18 @@ export function installStyle(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async () => {
 		active = true;
+		doctrineSent = false;
 	});
 
-	pi.on("before_agent_start", async (event: any) => {
+	pi.on("before_agent_start", async (event: any, ctx: any) => {
 		try {
 			if (!active) return;
+			// The 1.3KB discipline essay is sent once per session (and re-sent
+			// after a history clear). The 102B REMINDER, appended per user
+			// message by the context hook below, carries the drift suppression.
+			const entries = ctx?.sessionManager?.getEntries?.() ?? [];
+			if (doctrineSent && entries.length > 0) return;
+			doctrineSent = true;
 			return { systemPrompt: `${event.systemPrompt}\n\n${SYSTEM_PROMPT}` };
 		} catch (err) {
 			console.error("[pi-ui] style before_agent_start error:", (err as Error).message);
