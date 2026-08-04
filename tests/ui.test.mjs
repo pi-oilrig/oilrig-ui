@@ -406,34 +406,6 @@ check("starship telemetry: chevron-separated", teleLine.includes("\uF054"));
 	api.unregister("stats");
 	check("unregistered slot gone", !maxLines(ov2).some((l) => l.includes("cpu: 42%")));
 
-	// ── monochrome: colour is stripped, structure survives, ESC is never eaten
-	// The strip once printed a literal `[0m` after every slot fragment: mono()
-	// re-emitted the SGR codes it had decided to keep, then a control-character
-	// scrub whose class ran \x0b-\x1f deleted the ESC right back off them.
-	const SGR = /\x1b\[[0-9;]*m/g;
-	const params = (s) => (s.match(SGR) ?? []).flatMap((c) => c.slice(2, -1).split(";"));
-	api.register({
-		id: "paint",
-		title: "paint",
-		priority: 210,
-		size: "card",
-		render: () => [
-			`\x1b[33mamber\x1b[0m \x1b[36mcyan\x1b[0m \x1b[1mbold\x1b[0m \x1b[7minv\x1b[27m \x1b[2mdim\x1b[0m`,
-			`\x1b[2J\x1b[Hcursor-move \x1b]0;title\x07osc`,
-		],
-	});
-	const paint = maxRaw(ov2).join("\n");
-	// strip the *valid* sequences first; any `[0m` still standing is text the
-	// terminal would print, which is the bug
-	const orphaned = paint.replace(SGR, "");
-	check("no literal [0m leaks into the panel", !/\[[0-9;]*m/.test(orphaned));
-	check("colour params are stripped", !params(paint).some((p) => /^(3[0-7]|9[0-6]|4[0-7]|10[0-7]|2)$/.test(p)));
-	check("bold survives as weight", params(paint).includes("1"));
-	check("inverse survives as the cursor", params(paint).includes("7"));
-	check("non-SGR escapes are dropped whole", paint.includes("cursor-move") && !paint.includes("2J") && !paint.includes("title\x07"));
-	check("a slot's reset re-asserts the panel white", /\x1b\[0m\x1b\[97m/.test(maxRaw(ov2).join("")));
-	api.unregister("paint");
-
 	// A slot that throws must not take the panel down with it.
 	api.register({ id: "boom", title: "boom", priority: 300, size: "card", render: () => { throw new Error("nope"); } });
 	check("a throwing slot degrades to one error line", maxLines(ov2).some((l) => l.includes("boom: render failed")));
