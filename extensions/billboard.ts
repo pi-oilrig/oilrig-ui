@@ -63,6 +63,7 @@ interface Registry {
 	list(): Slot[];
 	/** Redraw both surfaces — the strip and, if open, the overlay. */
 	repaint(): void;
+	onTick(fn: () => void, everyMs: number): () => void;
 	/** Open the max overlay, optionally focusing one slot. */
 	open(focusId?: string): void;
 	close(): void;
@@ -577,6 +578,31 @@ export function installBillboard(pi: ExtensionAPI): void {
 		};
 	}
 
+	// ── one heartbeat for every slot owner (A3) ─────────────────────────────
+	// Subscribers coalesce onto a single interval at the shortest requested
+	// period; each fires when its own period has elapsed. All cancel → the
+	// interval clears. repaint() stays the push path for immediate state changes.
+	const ticks = new Map<() => void, { fn: () => void; period: number; last: number }>();
+	let heartbeat: ReturnType<typeof setInterval> | undefined;
+	const beat = () => {
+		const now = Date.now();
+		for (const t of ticks.values())
+			if (now - t.last >= t.period) {
+				t.last = now;
+				t.fn();
+			}
+	};
+	const recomputeHeartbeat = () => {
+		if (!ticks.size) {
+			if (heartbeat) { clearInterval(heartbeat); heartbeat = undefined; }
+			return;
+		}
+		const minPeriod = Math.min(...[...ticks.values()].map((t) => t.period));
+		if (heartbeat) clearInterval(heartbeat);
+		heartbeat = setInterval(beat, minPeriod);
+		(heartbeat as any)?.unref?.();
+	};
+
 	const api: Registry = {
 		register(s) {
 			registry.set(s.id, toSlot(s));
@@ -598,6 +624,12 @@ export function installBillboard(pi: ExtensionAPI): void {
 		// so this does NOT bust the cache: launch ticks every 2s and until every
 		// 5s, and an unchanged frame must not cost a setWidget.
 		repaint,
+		onTick(fn: () => void, everyMs: number): () => void {
+			const key = fn;
+			ticks.set(key, { fn, period: Math.max(1, everyMs | 0), last: Date.now() });
+			recomputeHeartbeat();
+			return () => { ticks.delete(key); recomputeHeartbeat(); };
+		},
 		open(focusId) {
 			if (state.mode !== "max") toggle();
 			if (focusId && registry.has(focusId)) setFocus(focusId);

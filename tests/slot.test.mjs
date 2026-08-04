@@ -89,6 +89,23 @@ api.register({ id: "mid", priority: 50, size: "row", render: () => ["mid"] });
 api.unregister("mid");
 check("unregister removes the slot", !ids().includes("mid"));
 
+// ── onTick (A3): one coalesced heartbeat for slot owners ──
+// Two ticks at different periods share a single interval; cancel returns a
+// function that removes the subscriber. The billboard's repaint() stays the
+// push path; onTick is the periodic beat.
+let a = 0, b = 0;
+const cancelA = api.onTick(() => { a++; }, 10);
+const cancelB = api.onTick(() => { b++; }, 40);
+check("onTick returns a cancel function", typeof cancelA === "function");
+await new Promise((r) => setTimeout(r, 35)); // ~3 beats at 10ms: a fires 3x, b fires once (40ms period)
+check("shorter-period tick fires more often", a >= 2 && a > b, `a=${a} b=${b}`);
+cancelA();
+const aAfter = a;
+await new Promise((r) => setTimeout(r, 95));
+check("cancel stops a tick", a === aAfter, `a=${a} aAfter=${aAfter}`);
+check("the other tick keeps firing after one cancels", b >= 2, `b=${b}`);
+cancelB();
+
 rmSync(SCRATCH, { recursive: true, force: true });
 const passed = results.filter((r) => r.startsWith("PASS")).length;
 console.log(results.join("\n"));

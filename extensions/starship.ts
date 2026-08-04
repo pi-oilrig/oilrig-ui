@@ -32,7 +32,7 @@ function isAssistant(m: any): boolean {
 
 export function installStarship(pi: ExtensionAPI): void {
 	let sessionStart = Date.now();
-	let timer: ReturnType<typeof setInterval> | undefined;
+	let timer: any;
 	let sessionCtx: any;
 
 	// session totals
@@ -188,12 +188,13 @@ export function installStarship(pi: ExtensionAPI): void {
 	// is the whole reason this clock exists.
 	function startClock(): void {
 		if (timer) return;
-		timer = setInterval(() => repaintSlots(), 30000);
-		(timer as any).unref?.();
+		// One coalesced heartbeat (A3): the panel beats once, not once per slot.
+		timer = globalThis.__billboard?.onTick?.(() => repaintSlots(), 30000) ?? setInterval(() => repaintSlots(), 30000);
+		(timer as any)?.unref?.();
 	}
 
 	pi.on("session_shutdown", () => {
-		if (timer) clearInterval(timer);
+		if (timer) { if (typeof timer === "function") timer(); else clearInterval(timer); }
 		timer = undefined;
 		unregisterSlot(SLOT_ID);
 	});
