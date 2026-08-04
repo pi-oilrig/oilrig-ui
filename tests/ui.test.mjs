@@ -135,12 +135,12 @@ await fire(stylePi, "session_start", {}, chromeCtx);
 
 chromeCtx.ui.notify("Ponytail loaded: 3 rules");
 chromeCtx.ui.notify("hello");
-check("ponytail toast swallowed", !toasts.includes("Ponytail loaded: 3 rules"));
+check("notify not wrapped — ponytail toast passes", toasts.includes("Ponytail loaded: 3 rules"));
 check("other toasts pass", toasts.includes("hello"));
 
 chromeCtx.ui.setStatus("ponytail", "x");
 chromeCtx.ui.setStatus("kern", "ok");
-check("ponytail status swallowed", !statuses.some(([k]) => k === "ponytail") && statuses.some(([k]) => k === "kern"));
+check("setStatus not wrapped — ponytail key passes", statuses.some(([k]) => k === "ponytail") && statuses.some(([k]) => k === "kern"));
 
 chromeCtx.ui.setHeader("WELCOME");
 check("header installs swallowed", headers.length > 0 && headers.every((h) => h === undefined));

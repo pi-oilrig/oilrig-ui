@@ -1,13 +1,11 @@
 // chrome — TUI component wraps.
 //
-// Three jobs:
+// Two jobs:
 //   1. no-header: suppress open-tui's welcome header via setHeader wrap.
 //   2. status-line: wrap setFooter to render a clean left/right pair layout
 //      per line, ordered by importance. Line 1: CWD + context bar. Line 2:
 //      pi's stats (tokens+cost left, model right). Lines 3+: extension pairs.
 //      No box borders, no side rails, no greedy packing.
-//   3. silence-ponytail: only needed if ponytail is loaded — harmless no-op
-//      when absent.
 
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
@@ -204,23 +202,7 @@ export function installChrome(ctx: any): void {
 		const ui = (ctx as any)?.ui;
 		if (!ui) return;
 
-		// 1. silence ponytail toast + status bar entry (no-op if ponytail absent)
-		if (typeof ui.notify === "function") {
-			const origNotify = ui.notify.bind(ui);
-			ui.notify = (message: string, type?: string) => {
-				if (typeof message === "string" && /Ponytail loaded:/.test(message)) return;
-				return origNotify(message, type);
-			};
-		}
-		if (typeof ui.setStatus === "function") {
-			const origStatus = ui.setStatus.bind(ui);
-			ui.setStatus = (key: string, text?: string) => {
-				if (key === "ponytail") return;
-				return origStatus(key, text);
-			};
-		}
-
-		// 2. suppress open-tui welcome header (no-op if open-tui absent)
+		// suppress open-tui welcome header (no-op if open-tui absent)
 		const uiHeader = ctx.ui as {
 			setHeader?: ((c: unknown) => void) & { __noHeader?: boolean };
 		};
