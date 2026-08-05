@@ -37,9 +37,10 @@ export default function (pi: ExtensionAPI) {
 	// Context tracker — progress bar in the status bar
 	installContextTracker(pi);
 
-	// Chrome wraps — header/footer suppression, status line, version tag
-	// Must be last so it wraps whatever footer the editor installs
+	// Chrome wraps — header/footer suppression, status line, version tag.
+	// Installs the self-contained retro footer (folder/version/session-id +
+	// tokens/model + extension statuses) via ctx.ui.setFooter().
 	pi.on("session_start", (_event: any, ctx: any) => {
-		installChrome(ctx);
+		installChrome(pi, ctx);
 	});
 }

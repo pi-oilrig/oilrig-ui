@@ -118,13 +118,14 @@ check(":q triggers shutdown", shutdownCalled === true, String(r?.action));
 const toasts = [];
 const statuses = [];
 const headers = [];
+let footerFactory = null;
 const chromeCtx = {
 	mode: "tui",
 	ui: {
 		notify: (m) => toasts.push(m),
 		setStatus: (k, v) => statuses.push([k, v]),
 		setHeader: (c) => headers.push(c),
-		setFooter: () => {},
+		setFooter: (f) => { footerFactory = f; },
 		setEditorComponent: () => {},
 		setWidget: () => {},
 		theme: { fg: () => "" },
@@ -144,7 +145,13 @@ check("setStatus not wrapped — ponytail key passes", statuses.some(([k]) => k 
 
 chromeCtx.ui.setHeader("WELCOME");
 check("header installs swallowed", headers.length > 0 && headers.every((h) => h === undefined));
-check("footer wrap installed", chromeCtx.ui.__statusLineWrapped === true);
+check("retro footer installed", typeof footerFactory === "function");
+// footer must render without throwing against a minimal footerData
+{
+	const comp = footerFactory({}, { fg: () => "" }, { getExtensionStatuses: () => new Map(), getGitBranch: () => null, getAvailableProviderCount: () => 1 });
+	const lines = comp.render(80);
+	check("footer renders a separator + lines", Array.isArray(lines) && lines.length >= 2);
+}
 
 // ── editor stack ──
 let editorFactoryCalled = false;
