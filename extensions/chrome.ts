@@ -213,10 +213,12 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 	return { input, output, cacheRead, cacheWrite, cost };
 }
 
+const THINK = "\uF0EB"; //  nf-fa-lightbulb-o (thinking effort)
+
 function modelString(footerData: any): string {
 	const model = liveModel;
 	let s = model?.id || "no-model";
-	if (model?.reasoning) s = liveThinking === "off" ? `${s} │ off` : `${s} │ ${liveThinking}`;
+	if (model?.reasoning) s = `${s} │ ${THINK} ${liveThinking}`;
 	const provCount = footerData?.getAvailableProviderCount?.() ?? 1;
 	if (provCount > 1 && model) s = `(${model.provider}) ${s}`;
 	return s;
