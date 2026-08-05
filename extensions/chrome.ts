@@ -266,11 +266,19 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 	return out;
 }
 
+// chrome owns the *renderer*; hub owns the *installation* (hub's session_start
+// fires early and re-fires on reload, so the footer survives pi's
+// resetExtensionUI which otherwise restores the built-in footer). chrome
+// publishes its renderer on globalThis for hub's delegating factory; it also
+// installs directly as a standalone fallback for sessions without hub.
 function installFooter(ctx: any): void {
 	const ui = (ctx as any)?.ui;
 	if (!ui?.setFooter) return;
+	const render = (width: number, footerData: any) =>
+		retroLines(Math.max(0, width), ctx, footerData);
+	(globalThis as any).__piChromeFooter = render;
 	ui.setFooter((_tui: any, _theme: any, footerData: any) => ({
-		render: (width: number) => retroLines(Math.max(0, width), ctx, footerData),
+		render: (width: number) => render(width, footerData),
 		dispose() {},
 	}));
 }
