@@ -48,6 +48,14 @@ const META: Record<string, { icon: string; color: string; rank: number }> = {
 
 function rankOf(key: string): number { return META[key]?.rank ?? 100; }
 
+// Compound cells: keys grouped here render as ONE cell (glyph+text · glyph+text),
+// ranked by the lowest member rank. Members consumed are dropped from the
+// individual stream so they don't also appear alone.
+const COMPOUND: string[][] = [
+	["trunk", "hub"],     // worktree + loader: the environment this session runs in
+	["toolband", "mcp"], // active tools + MCP servers: the tool surface
+];
+
 // Short session id — the first 8 chars of PI_SESSION_ID are the walkie-talkie
 // address prefix (wt_send `to`). Shown dim after the cwd so you can copy it to
 // reach this session from another pi.
@@ -256,14 +264,28 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 	try {
 		const statuses = footerData?.getExtensionStatuses?.();
 		if (statuses && statuses.size > 0) {
-			const exts = Array.from(statuses.entries())
-				.filter(([key]) => !VOLATILE.has(key) && key !== "context")
-				.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b));
+			const entries = Array.from(statuses.entries())
+				.filter(([key]) => !VOLATILE.has(key) && key !== "context");
+			const sm = new Map(entries);
+			const consumed = new Set<string>();
+			const cells: { rank: number; text: string }[] = [];
+			for (const group of COMPOUND) {
+				const have = group.filter((k) => sm.has(k) && !consumed.has(k));
+				if (have.length === 0) continue;
+				cells.push({
+					rank: Math.min(...have.map(rankOf)),
+					text: have.map((k) => paintStatus(k, sm.get(k)!)).join(" \u00b7 "),
+				});
+				have.forEach((k) => consumed.add(k));
+			}
+			for (const [k, v] of entries) {
+				if (consumed.has(k)) continue;
+				cells.push({ rank: rankOf(k), text: paintStatus(k, v) });
+			}
+			cells.sort((a, b) => a.rank - b.rank);
 			// Two columns: one item per row in a left and a right column.
-			for (let i = 0; i < exts.length; i += 2) {
-				const left = paintStatus(exts[i][0], exts[i][1]);
-				const right = exts[i + 1] ? paintStatus(exts[i + 1][0], exts[i + 1][1]) : "";
-				out.push(renderPair(left, right, width));
+			for (let i = 0; i < cells.length; i += 2) {
+				out.push(renderPair(cells[i].text, cells[i + 1]?.text ?? "", width));
 			}
 		}
 	} catch { /* best-effort */ }
