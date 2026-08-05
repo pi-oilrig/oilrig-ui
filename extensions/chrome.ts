@@ -250,11 +250,15 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 	try {
 		const statuses = footerData?.getExtensionStatuses?.();
 		if (statuses && statuses.size > 0) {
-			const segs = Array.from(statuses.entries())
+			const exts = Array.from(statuses.entries())
 				.filter(([key]) => !VOLATILE.has(key) && key !== "context")
-				.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b))
-				.map(([key, text]) => paintStatus(key, text));
-			if (segs.length) out.push(`${truncateToWidth(segs.join(`${DIM} · ${RESET}`), Math.max(0, width), "…")}`);
+				.sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b));
+			// Two columns: one item per row in a left and a right column.
+			for (let i = 0; i < exts.length; i += 2) {
+				const left = paintStatus(exts[i][0], exts[i][1]);
+				const right = exts[i + 1] ? paintStatus(exts[i + 1][0], exts[i + 1][1]) : "";
+				out.push(renderPair(left, right, width));
+			}
 		}
 	} catch { /* best-effort */ }
 	return out;
