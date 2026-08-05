@@ -23,7 +23,7 @@ Replaces: `pi-open-tui`, `pi-atuin`, `supi-prompt-suggestions`, `pi-chrome`,
 There is exactly one `belowEditor` widget in a session and exactly one info
 overlay, and pi-ui owns both. Before this, seven other callers of
 `ctx.ui.setWidget` stacked their own blocks under the editor beside the
-billboard's, and one of them (the todo timeline's focus mode) opened a second
+billboard's, and one of them (the timeline's focus mode) opened a second
 info overlay on top. Input dialogs — `questionnaire`, ontology's `btw` — are not
 info overlays and stay as modals.
 
@@ -69,7 +69,7 @@ panel down.
 |------|---------|-----------|------------|
 | `starship` | pi-ui | telemetry one-liner | the same numbers, one per line, + in/out split |
 | `gantt` | pi-gantt | mode badge + `done/total` | the rolling-lane timeline chart |
-| `timeline` | pi-todo | the plan's dot row | the plan as an **interactive** list (focusable) |
+| `timeline` | pi-until | the plan's dot row | the plan as an **interactive** list (focusable) |
 | `rigor` | pi-rigor | `✗ n checks` (failures only) | each failing check + its tail |
 | `watch` | pi-file-awareness | `◈ n files` | file count, fires, last fire, the armed prompt |
 | `launch` | pi-launch | `n up` / `n failed` | one block per job + its newest log line |
