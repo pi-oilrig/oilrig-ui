@@ -117,7 +117,11 @@ function sanitize(text: string): string {
 // other keyed statuses keep their label.
 function stripForeignIcon(key: string, text: string): string {
 	if (key !== "mcp") return text;
-	return text.replace(/^\s*(?:[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}])+\s*/u, "")
+	// mcp-adapter wraps its text in an ANSI accent colour, so strip ANSI
+	// first (chrome re-colours via META), then drop the leading emoji +
+	// redundant "MCP:" label — chrome owns the nerd-font plug for this key.
+	const bare = text.replace(/\x1b\[[0-9;]*m/g, "");
+	return bare.replace(/^\s*(?:[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}])+\s*/u, "")
 		.replace(/^\s*MCP:\s*/i, "");
 }
 
@@ -229,7 +233,7 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 	// Separator rule below the input, with the model right-aligned on it.
 	const mdl = modelString(footerData);
 	const mdlW = mdl.length;
-	const lead = mdlW > 0 ? ` ${mdl} ` : "";
+	const lead = mdlW > 0 ? `  ${mdl} ` : "";
 	const ruleW = Math.max(0, width - lead.length);
 	out.push(`${DIM}${lead}${H.repeat(ruleW)}${RESET}`);
 	try {
