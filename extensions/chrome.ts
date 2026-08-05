@@ -52,7 +52,7 @@ function rankOf(key: string): number { return META[key]?.rank ?? 100; }
 // ranked by the lowest member rank. Members consumed are dropped from the
 // individual stream so they don't also appear alone.
 const COMPOUND: string[][] = [
-	["trunk", "hub"],     // worktree + loader: the environment this session runs in
+	["wt", "hub"],         // walkie-talkie + loader: communication + session knowledge
 	["toolband", "mcp"], // active tools + MCP servers: the tool surface
 	["ontology", "kern"], // entity index + memory graph: what the session knows
 ];
