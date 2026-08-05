@@ -119,18 +119,19 @@ function sanitize(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
-// mcp-adapter ships its own leading emoji + "MCP:" label in the status
-// text ("🔌 MCP: 3 servers enabled"). chrome has a nerd-font plug for the
-// same key, so strip the foreign emoji + redundant label for mcp only —
-// other keyed statuses keep their label.
+// mcp-adapter ships its own leading emoji + "MCP:" label + a prose count
+// ("🔌 MCP: 3 servers enabled"). chrome has a nerd-font plug for the same
+// key, so strip the foreign emoji + redundant label, then compact the count
+// to "<n> MCPs" for mcp only — other keyed statuses keep their text.
 function stripForeignIcon(key: string, text: string): string {
 	if (key !== "mcp") return text;
 	// mcp-adapter wraps its text in an ANSI accent colour, so strip ANSI
 	// first (chrome re-colours via META), then drop the leading emoji +
-	// redundant "MCP:" label — chrome owns the nerd-font plug for this key.
+	// redundant "MCP:" label, then compact "<n> servers enabled" → "<n> MCPs".
 	const bare = text.replace(/\x1b\[[0-9;]*m/g, "");
 	return bare.replace(/^\s*(?:[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}])+\s*/u, "")
-		.replace(/^\s*MCP:\s*/i, "");
+		.replace(/^\s*MCP:\s*/i, "")
+		.replace(/^(\d+)\s*servers?\s*enabled/i, "$1 MCPs");
 }
 
 function paintStatus(key: string, text: string): string {
