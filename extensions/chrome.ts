@@ -159,6 +159,17 @@ export function renderPair(left: string, right: string, width: number): string {
 	return ` ${l}${" ".repeat(Math.max(0, leftMax - vw(l)))}${r}`;
 }
 
+function renderPairSep(left: string, right: string, width: number): string {
+	if (!right) return ` ${left}`;
+	const sep = 1; // │ between columns
+	const gap = 1; // one space each side of the separator
+	const leftMax = Math.max(10, Math.floor((width - 1 - sep - 2 * gap) * 0.55));
+	const rightMax = Math.max(10, width - 1 - sep - 2 * gap - leftMax);
+	const l = truncateToWidth(left, leftMax, "…");
+	const r = truncateToWidth(right, rightMax, "…");
+	return ` ${l}${" ".repeat(Math.max(0, leftMax - vw(l)))} │${r}`;
+}
+
 // ── footer ────────────────────────────────────────────────────────────────
 // Self-contained retro status line installed via ctx.ui.setFooter(). The old
 // design only *wrapped* setFooter, waiting for another extension to install a
@@ -296,7 +307,7 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 			cells.sort((a, b) => a.rank - b.rank);
 			// Two columns: one item per row in a left and a right column.
 			for (let i = 0; i < cells.length; i += 2) {
-				out.push(renderPair(cells[i].text, cells[i + 1]?.text ?? "", width));
+				out.push(renderPairSep(cells[i].text, cells[i + 1]?.text ?? "", width));
 			}
 		}
 	} catch { /* best-effort */ }
