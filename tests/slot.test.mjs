@@ -1,14 +1,10 @@
-// slot.test — the billboard slot registry: priority ordering and the
-// pre-install pending drain.
-//
-// Slots register through globalThis.__billboard. A slot that registers before
-// ui's install publishes that global queues on globalThis.__billboardPending
-// and the panel drains it on install (billboard.ts). A bug in the drain is
-// silent — the slot simply never appears — so this file is the tripwire,
-// split out of ui.test.mjs per C3 alongside mono.test.
+// slot.test — the ui slot client targets globalThis.__web (the per-cwd web
+// surface, pi-web). A slot that registers before __web is published queues
+// on globalThis.__webPending; once __web is up, registerSlot calls it
+// directly. Split out of ui.test.mjs per C3; re-pointed at __web by the A9
+// fold (billboard deleted, web replaces it).
 //
 //   node --experimental-strip-types tests/slot.test.mjs
-
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -32,79 +28,49 @@ writeFileSync(join(TUI, "utils.js"), `export const extractAnsiCode = () => null;
 writeFileSync(join(TUI, "keys.js"), `export const decodePrintableKey = () => undefined;`);
 writeFileSync(join(TUI, "index.js"), `
 export const visibleWidth = (s) => String(s).replace(/\\x1b\\[[0-9;]*m/g, "").length;
-export const truncateToWidth = (s, w) => { const vis = String(s).replace(/\\x1b\\[[0-9;]*m/g, ""); return vis.length <= w ? String(s) : String(s).slice(0, w); };
 export const CURSOR_MARKER = "\\x1b[7m";
 export const fuzzyFilter = (items, q, fn) => items.filter(i => fn(i).toLowerCase().includes(String(q).toLowerCase()));
 export const matchesKey = (data, key) => data === key;
 export const getKeybindings = () => ({ matches: () => false });
-export const sliceByColumn = (s, start, len) => s.slice(start, start + len);
 export const Key = { up: "up", down: "down", left: "left", right: "right", escape: "escape", enter: "enter", tab: "tab", shift: (k) => "shift+" + k };
-export const wrapTextWithAnsi = (s, w) => { const out = []; let t = String(s); if (!t) return [""]; while (t.length > w) { out.push(t.slice(0, w)); t = t.slice(w); } out.push(t); return out; };
 export class Editor { constructor(tui, theme){ this.tui = tui; this.theme = theme; this._t = ""; } setText(t){ this._t = String(t); } getText(){ return this._t; } handleInput(d){ if (d === "backspace") this._t = this._t.slice(0, -1); else this._t += d; } render(w){ return [this._t || " "]; } }
 export class Text { constructor(t){ this._t = t; } render(w){ return [String(this._t)]; } }
 export class Container { constructor(){ this._c = []; } addChild(c){ this._c.push(c); } render(w){ return this._c.flatMap(x => (x && x.render) ? x.render(w) : []); } }
 `);
 for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
 	mkdirSync(join(SCRATCH, "node_modules", pkg), { recursive: true });
-	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } render(w) { return this.state.lines.map(l => l || " "); } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export class DynamicBorder { constructor(color){ this._color = color || (s => s); } render(w){ return [this._color("-".repeat(Math.max(1, w)))]; } } export const ExtensionAPI = {};`);
+	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(){} }; export const getSelectListTheme = () => ({}); export class DynamicBorder { constructor(){} render(){ return []; } } export const ExtensionAPI = {};`);
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "package.json"), JSON.stringify({ name: pkg, version: "0.0.0", main: "index.js", exports: { ".": "./index.js" } }));
 }
 writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-slot-test", type: "module", pi: {} }));
 process.env.HOME = SCRATCH;
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "billboard.ts", "slot.ts", "questionnaire.ts", "colors.ts", "retro.ts", "context.ts"])
-	writeFileSync(join(SCRATCH, "extensions", part), readFileSync(join(ROOT, "extensions", part), "utf8"));
+// slot.ts is the client under test; it targets __web, not the deleted billboard.
+writeFileSync(join(SCRATCH, "extensions", "slot.ts"), readFileSync(join(ROOT, "extensions", "slot.ts"), "utf8"));
 
 const results = [];
 const check = (name, cond, extra = "") => results.push(`${cond ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
 
-// A fresh process: no billboard installed yet. A slot that registers now must
-// queue on globalThis.__billboardPending (the pre-install path every consumer
-// takes when it loads before ui).
-delete globalThis.__billboard;
-delete globalThis.__billboardPending;
-const { registerSlot } = await import(pathToFileURL(join(SCRATCH, "extensions/slot.ts")).href);
+// Fresh process: no __web yet. registerSlot must queue on __webPending.
+delete globalThis.__web;
+delete globalThis.__webPending;
+const { registerSlot, unregisterSlot } = await import(pathToFileURL(join(SCRATCH, "extensions/slot.ts")).href);
 registerSlot({ id: "early", title: "early", priority: 30, size: "row", render: () => ["early-row"] });
-check("pre-install slot queues on __billboardPending", Array.isArray(globalThis.__billboardPending) && globalThis.__billboardPending.length === 1);
+check("pre-install slot queues on __webPending", Array.isArray(globalThis.__webPending) && globalThis.__webPending.length === 1);
 
-// Now install the billboard — it must drain the pending queue into the registry.
-const { installBillboard } = await import(pathToFileURL(join(SCRATCH, "extensions/billboard.ts")).href);
-const pi = {
-	handlers: new Map(), command: undefined, shortcuts: new Map(),
-	on(ev, fn) { if (!this.handlers.has(ev)) this.handlers.set(ev, []); this.handlers.get(ev).push(fn); },
-	registerCommand(_n, spec) { this.command = spec; },
-	registerShortcut(key, spec) { this.shortcuts.set(key, spec); },
-	async fire(ev, e, c) { let out; for (const fn of this.handlers.get(ev) ?? []) out = (await fn(e, c)) ?? out; return out; },
+// Once __web is published with a register fn, registerSlot calls it directly.
+const reg = new Map();
+globalThis.__web = {
+	register(s) { reg.set(s.id, s); },
+	unregister(id) { reg.delete(id); },
+	repaint() {},
 };
-const bui = { overlays: [], tui: { renders: 0, requestRender() { this.renders++; } }, custom(f, o) { const rec = { options: o, closed: false }; return new Promise((r) => { rec.done = (v) => { rec.closed = true; r(v); }; rec.component = f(this.tui, {}, {}, rec.done); this.overlays.push(rec); }); }, setWidget() {}, notify() {} };
-installBillboard(pi);
-await pi.fire("session_start", {}, { ui: bui });
+registerSlot({ id: "live", priority: 50, size: "row", render: () => ["live"] });
+check("post-install slot registers directly", reg.has("live"));
+check("pending queue still holds the early slot", globalThis.__webPending.length === 1);
 
-const api = globalThis.__billboard;
-const ids = () => (api.list?.() ?? []).map((s) => s.id);
-check("pending queue drained on install", ids().includes("early"));
-check("pending queue emptied after drain", !(globalThis.__billboardPending?.length));
-
-// unregister removes a slot.
-api.register({ id: "mid", priority: 50, size: "row", render: () => ["mid"] });
-api.unregister("mid");
-check("unregister removes the slot", !ids().includes("mid"));
-
-// ── onTick (A3): one coalesced heartbeat for slot owners ──
-// Two ticks at different periods share a single interval; cancel returns a
-// function that removes the subscriber. The billboard's repaint() stays the
-// push path; onTick is the periodic beat.
-let a = 0, b = 0;
-const cancelA = api.onTick(() => { a++; }, 10);
-const cancelB = api.onTick(() => { b++; }, 40);
-check("onTick returns a cancel function", typeof cancelA === "function");
-await new Promise((r) => setTimeout(r, 35)); // ~3 beats at 10ms: a fires 3x, b fires once (40ms period)
-check("shorter-period tick fires more often", a >= 2 && a > b, `a=${a} b=${b}`);
-cancelA();
-const aAfter = a;
-await new Promise((r) => setTimeout(r, 95));
-check("cancel stops a tick", a === aAfter, `a=${a} aAfter=${aAfter}`);
-check("the other tick keeps firing after one cancels", b >= 2, `b=${b}`);
-cancelB();
+// unregister reaches the live registry.
+unregisterSlot("live");
+check("unregister removes the slot", !reg.has("live"));
 
 rmSync(SCRATCH, { recursive: true, force: true });
 const passed = results.filter((r) => r.startsWith("PASS")).length;

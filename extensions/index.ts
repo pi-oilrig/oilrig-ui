@@ -10,7 +10,6 @@ import { installStyle } from "./style.ts";
 import { installChrome } from "./chrome.ts";
 import { installEditor } from "./editor.ts";
 import { installStarship } from "./starship.ts";
-import { installBillboard } from "./billboard.ts";
 import { installQuestionnaire } from "./questionnaire.ts";
 import { installContextTracker } from "./context.ts";
 
@@ -21,11 +20,9 @@ export default function (pi: ExtensionAPI) {
 	// Editor stack — selection, history, :q, gantt board, left bar
 	installEditor(pi);
 
-	// Billboard — the one info surface: min strip in the belowEditor widget,
-	// max overlay on f2, slot registry on globalThis.__billboard. Installed
-	// before its own slot providers so they register directly rather than
-	// through the pending queue.
-	installBillboard(pi);
+	// The info surface is the per-cwd local website (pi-web), a separate
+	// package: extensions register HTML cards on globalThis.__web and a
+	// detached server serves them at 127.0.0.1. No in-pi widget or overlay.
 
 	// Starship — session telemetry, registered as the first billboard slot
 	installStarship(pi);

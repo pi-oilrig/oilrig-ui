@@ -1,12 +1,12 @@
-// slot.ts — the client side of the billboard registry, for pi-ui's own modules.
+// slot.ts — the client side of the web surface registry, for pi-ui's own modules.
 //
 // Extension load order is not fixed, so a module may register before the
-// billboard's install has published globalThis.__billboard. Registrations made
-// early queue on globalThis.__billboardPending and the panel drains them.
+// web surface's install has published globalThis.__web. Registrations made
+// early queue on globalThis.__webPending and the panel drains them.
 // Other packages inline the same six lines rather than import across a package
 // boundary — this file is not a shared library, it is ui's copy.
 
-export interface BillboardSlot {
+export interface WebSlot {
 	id: string;
 	title?: string;
 	priority?: number;
@@ -20,29 +20,29 @@ export interface BillboardSlot {
 	onBlur?: () => void;
 }
 
-export function billboard(): any {
-	return (globalThis as any).__billboard;
+export function web(): any {
+	return (globalThis as any).__web;
 }
 
-export function registerSlot(spec: BillboardSlot): void {
-	const api = billboard();
+export function registerSlot(spec: WebSlot): void {
+	const api = web();
 	if (api && typeof api.register === "function") {
 		api.register(spec);
 		return;
 	}
-	((globalThis as any).__billboardPending ??= []).push(spec);
+	((globalThis as any).__webPending ??= []).push(spec);
 }
 
 export function unregisterSlot(id: string): void {
-	const api = billboard();
+	const api = web();
 	if (api && typeof api.unregister === "function") api.unregister(id);
-	const pending = (globalThis as any).__billboardPending;
+	const pending = (globalThis as any).__webPending;
 	if (Array.isArray(pending)) {
-		const i = pending.findIndex((s: BillboardSlot) => s.id === id);
+		const i = pending.findIndex((s: WebSlot) => s.id === id);
 		if (i >= 0) pending.splice(i, 1);
 	}
 }
 
 export function repaintSlots(): void {
-	billboard()?.repaint?.();
+	web()?.repaint?.();
 }

@@ -189,7 +189,7 @@ export function installStarship(pi: ExtensionAPI): void {
 	function startClock(): void {
 		if (timer) return;
 		// One coalesced heartbeat (A3): the panel beats once, not once per slot.
-		timer = globalThis.__billboard?.onTick?.(() => repaintSlots(), 30000) ?? setInterval(() => repaintSlots(), 30000);
+		timer = globalThis.__web?.onTick?.(() => repaintSlots(), 30000) ?? setInterval(() => repaintSlots(), 30000);
 		(timer as any)?.unref?.();
 	}
 
