@@ -35,7 +35,7 @@ import { createRequire } from "node:module";
 
 const requireTui = createRequire(import.meta.resolve("@earendil-works/pi-tui"));
 const { wordWrapLine } = requireTui("./components/editor.js") as any;
-const { extractAnsiCode, extractSegments } = requireTui("./utils.js") as any;
+const { extractSegments } = requireTui("./utils.js") as any;
 const { findWordBackward, findWordForward } = requireTui("./word-navigation.js") as any;
 
 type Pos = { line: number; col: number };
@@ -120,23 +120,6 @@ function rowRange(row: Row, s: Pos, e: Pos): { from: number; len: number } | nul
 	if (row.line === e.line) to = Math.min(to, e.col - row.start);
 	if (to <= from || from >= row.text.length) return null;
 	return { from: visibleWidth(row.text.slice(0, from)), len: visibleWidth(row.text.slice(from, to)) };
-}
-
-function plainOf(line: string): { plain: string; cols: number[] } {
-	let plain = "";
-	const cols: number[] = [];
-	let col = 0;
-	let i = 0;
-	while (i < line.length) {
-		const ansi = extractAnsiCode(line, i);
-		if (ansi) { i += ansi.length; continue; }
-		const ch = line[i];
-		plain += ch;
-		cols.push(col);
-		col += visibleWidth(ch);
-		i++;
-	}
-	return { plain, cols };
 }
 
 function overlay(line: string, startCol: number, len: number, width: number): string {
