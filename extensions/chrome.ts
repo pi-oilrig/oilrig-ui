@@ -215,7 +215,7 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 function modelString(footerData: any): string {
 	const model = liveModel;
 	let s = model?.id || "no-model";
-	if (model?.reasoning) s = liveThinking === "off" ? `${s} · thinking off` : `${s} · ${liveThinking}`;
+	if (model?.reasoning) s = liveThinking === "off" ? `${s} │ thinking off` : `${s} │ ${liveThinking}`;
 	const provCount = footerData?.getAvailableProviderCount?.() ?? 1;
 	if (provCount > 1 && model) s = `(${model.provider}) ${s}`;
 	return s;
@@ -234,7 +234,7 @@ function contextUnit(statuses: Map<string, string> | undefined, ctx: any): strin
 	const ctxWindow = cu?.contextWindow ?? liveModel?.contextWindow ?? 0;
 	const pct = cu?.percent;
 	const pctDisp = pct === null || pct === undefined ? (ctxWindow ? `?/${formatTokens(ctxWindow)}` : "") : `${pct.toFixed(1)}%`;
-	return [bar, pctDisp, ...parts].filter(Boolean).join(" · ");
+	return [bar, pctDisp, ...parts].filter(Boolean).join(" │ ");
 }
 
 function retroLines(width: number, ctx: any, footerData: any): string[] {
@@ -275,7 +275,7 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 				if (have.length === 0) continue;
 				cells.push({
 					rank: Math.min(...have.map(rankOf)),
-					text: have.map((k) => paintStatus(k, sm.get(k)!)).join(" \u00b7 "),
+					text: have.map((k) => paintStatus(k, sm.get(k)!)).join(" │ "),
 				});
 				have.forEach((k) => consumed.add(k));
 			}
