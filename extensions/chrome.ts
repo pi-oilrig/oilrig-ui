@@ -221,20 +221,26 @@ function modelString(footerData: any): string {
 	return s;
 }
 
-function contextUnit(statuses: Map<string, string> | undefined, ctx: any): string {
-	const bar = statuses?.get("context") || "";
+// Context cell: a dynamic progress bar that grows to fill its column width
+// minus the usage text. Built from ctx.getContextUsage percent (one source of
+// truth) — the foreign `context` status bar (fixed-width, duplicate %) is dropped.
+function contextUnit(_statuses: Map<string, string> | undefined, ctx: any, cellW: number): string {
 	const totals = computeUsageTotals(ctx?.sessionManager?.getEntries?.() ?? []);
 	const parts: string[] = [];
 	if (totals.input) parts.push(`↑${formatTokens(totals.input)}`);
 	if (totals.output) parts.push(`↓${formatTokens(totals.output)}`);
-	if (totals.cacheRead) parts.push(`R${formatTokens(totals.cacheRead)}`);
-	if (totals.cacheWrite) parts.push(`W${formatTokens(totals.cacheWrite)}`);
 	if (totals.cost) parts.push(`$${totals.cost.toFixed(3)}`);
 	const cu = ctx?.getContextUsage?.();
-	const ctxWindow = cu?.contextWindow ?? liveModel?.contextWindow ?? 0;
 	const pct = cu?.percent;
-	const pctDisp = pct === null || pct === undefined ? (ctxWindow ? `?/${formatTokens(ctxWindow)}` : "") : `${pct.toFixed(1)}%`;
-	return [bar, pctDisp, ...parts].filter(Boolean).join(" │ ");
+	const pctNum = (typeof pct === "number" && pct >= 0) ? pct : null;
+	if (pctNum !== null) parts.push(`${pctNum.toFixed(1)}%`);
+	const text = parts.join(" │ ");
+	const textW = vw(text);
+	const sep = textW > 0 ? 1 : 0;
+	const barW = Math.max(0, cellW - 1 - sep - textW); // -1: leading space aligns with paintStatus cells
+	const filled = pctNum === null ? 0 : Math.round(barW * Math.min(100, Math.max(0, pctNum)) / 100);
+	const bar = `${"█".repeat(filled)}${"░".repeat(Math.max(0, barW - filled))}`;
+	return ` ${bar}${textW > 0 ? ` ${text}` : ""}`;
 }
 
 function retroLines(width: number, ctx: any, footerData: any): string[] {
@@ -259,7 +265,10 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 		if (sessionName) left1 += ` • ${sessionName}`;
 		if (sid) left1 += `  ${sid}`;
 		const statuses = footerData?.getExtensionStatuses?.();
-		const right1 = contextUnit(statuses, ctx);
+		const gap = 2;
+		const leftMax = Math.max(10, Math.floor((width - 1 - gap) * 0.55));
+		const rightMax = Math.max(10, width - 1 - gap - leftMax);
+		const right1 = contextUnit(statuses, ctx, rightMax);
 		out.push(renderPair(left1, right1, width));
 	} catch { /* best-effort */ }
 	try {
