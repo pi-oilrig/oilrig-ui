@@ -250,10 +250,14 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 	const out: string[] = [];
 	// Separator rule below the input, with the model right-aligned on it.
 	const mdl = modelString(footerData);
-	const mdlW = mdl.length;
 	const cw = Math.max(1, width - 1); // reserve 1 for the ▏ gutter
-	const lead = mdlW > 0 ? ` ${mdl} ` : "";
-	const ruleW = Math.max(0, cw - lead.length);
+	// Truncate the model label to its column so a long id (e.g. ollama
+	// `glm-5.2:cloud`) can never overflow the rule line — pi-tui throws on
+	// any line wider than the terminal. Measure with visible width, not
+	// .length: the string carries nerd-font glyphs (│, thinking icon).
+	let lead = mdl ? ` ${mdl} ` : "";
+	if (vw(lead) > cw) lead = truncateToWidth(lead, cw, "…");
+	const ruleW = Math.max(0, cw - vw(lead));
 	out.push(`${DIM}${lead}${H.repeat(ruleW)}${RESET}`);
 	try {
 		const sm = ctx?.sessionManager;
