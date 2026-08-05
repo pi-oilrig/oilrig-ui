@@ -54,7 +54,7 @@ function rankOf(key: string): number { return META[key]?.rank ?? 100; }
 const COMPOUND: string[][] = [
 	["wt", "hub"],                    // walkie-talkie + loader: communication + session knowledge
 	["trunk", "toolband", "mcp"],    // worktree + active tools + MCP servers: the tool surface
-	["ontology", "kern", "persona"], // entity index + memory graph + persona: what the session knows
+	["ontology", "kern"], // entity index + memory graph: what the session knows
 ];
 
 // Short session id — the first 8 chars of PI_SESSION_ID are the walkie-talkie
