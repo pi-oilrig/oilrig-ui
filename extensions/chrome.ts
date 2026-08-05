@@ -143,7 +143,7 @@ function paintStatus(key: string, text: string): string {
 	const inner = clean.includes("\x1b[")
 		? `${color}${icon}${RESET}${clean}`
 		: `${color}${icon}${clean}${RESET}`;
-	return ` ${inner}`;
+	return inner;
 }
 
 // ── render a pair: one item left, one right ───────────────────────────────
@@ -157,17 +157,6 @@ export function renderPair(left: string, right: string, width: number): string {
 	const l = truncateToWidth(left, leftMax, "…");
 	const r = truncateToWidth(right, rightMax, "…");
 	return ` ${l}${" ".repeat(Math.max(0, leftMax - vw(l)))}${r}`;
-}
-
-function renderPairSep(left: string, right: string, width: number): string {
-	if (!right) return ` ${left}`;
-	const sep = 1; // │ between columns
-	const gap = 1; // one space each side of the separator
-	const leftMax = Math.max(10, Math.floor((width - 1 - sep - 2 * gap) * 0.55));
-	const rightMax = Math.max(10, width - 1 - sep - 2 * gap - leftMax);
-	const l = truncateToWidth(left, leftMax, "…");
-	const r = truncateToWidth(right, rightMax, "…");
-	return ` ${l}${" ".repeat(Math.max(0, leftMax - vw(l)))} │${r}`;
 }
 
 // ── footer ────────────────────────────────────────────────────────────────
@@ -260,8 +249,9 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 	// Separator rule below the input, with the model right-aligned on it.
 	const mdl = modelString(footerData);
 	const mdlW = mdl.length;
-	const lead = mdlW > 0 ? `  ${mdl} ` : "";
-	const ruleW = Math.max(0, width - lead.length);
+	const cw = Math.max(1, width - 1); // reserve 1 for the ▏ gutter
+	const lead = mdlW > 0 ? ` ${mdl} ` : "";
+	const ruleW = Math.max(0, cw - lead.length);
 	out.push(`${DIM}${lead}${H.repeat(ruleW)}${RESET}`);
 	try {
 		const sm = ctx?.sessionManager;
@@ -272,16 +262,15 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 		const folder = `${CYAN}${FOLDER}${RESET}`;
 		const sid = sessionIdTag();
 		let left1 = `${tag ? `${tag}  ` : ""}${folder}  ${cwd}`.trimStart();
-		if (tag) left1 = ` ${left1}`;
 		if (branch) left1 += ` (${branch})`;
 		if (sessionName) left1 += ` • ${sessionName}`;
 		if (sid) left1 += `  ${sid}`;
 		const statuses = footerData?.getExtensionStatuses?.();
 		const gap = 2;
-		const leftMax = Math.max(10, Math.floor((width - 1 - gap) * 0.55));
-		const rightMax = Math.max(10, width - 1 - gap - leftMax);
+		const leftMax = Math.max(10, Math.floor((cw - 1 - gap) * 0.55));
+		const rightMax = Math.max(10, cw - 1 - gap - leftMax);
 		const right1 = contextUnit(statuses, ctx, rightMax);
-		out.push(renderPair(left1, right1, width));
+		out.push(renderPair(left1, right1, cw));
 	} catch { /* best-effort */ }
 	try {
 		const statuses = footerData?.getExtensionStatuses?.();
@@ -307,11 +296,11 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 			cells.sort((a, b) => a.rank - b.rank);
 			// Two columns: one item per row in a left and a right column.
 			for (let i = 0; i < cells.length; i += 2) {
-				out.push(renderPairSep(cells[i].text, cells[i + 1]?.text ?? "", width));
+				out.push(renderPair(cells[i].text, cells[i + 1]?.text ?? "", cw));
 			}
 		}
 	} catch { /* best-effort */ }
-	return out;
+	return out.map((l) => `▏${l}`);
 }
 
 // chrome owns the *renderer*; hub owns the *installation* (hub's session_start
