@@ -111,8 +111,18 @@ function sanitize(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
+// mcp-adapter ships its own leading emoji + "MCP:" label in the status
+// text ("🔌 MCP: 3 servers enabled"). chrome has a nerd-font plug for the
+// same key, so strip the foreign emoji + redundant label for mcp only —
+// other keyed statuses keep their label.
+function stripForeignIcon(key: string, text: string): string {
+	if (key !== "mcp") return text;
+	return text.replace(/^\s*(?:[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}])+\s*/u, "")
+		.replace(/^\s*MCP:\s*/i, "");
+}
+
 function paintStatus(key: string, text: string): string {
-	const clean = sanitize(text);
+	const clean = stripForeignIcon(key, sanitize(text));
 	const meta = META[key];
 	const color = meta ? meta.color : colorFor(key);
 	const icon = meta ? `${meta.icon} ` : "";
@@ -189,9 +199,18 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 	return { input, output, cacheRead, cacheWrite, cost };
 }
 
-function buildStatsLine(width: number, ctx: any, footerData: any): string {
-	const sm = ctx?.sessionManager;
-	const totals = computeUsageTotals(sm?.getEntries?.() ?? []);
+function modelString(footerData: any): string {
+	const model = liveModel;
+	let s = model?.id || "no-model";
+	if (model?.reasoning) s = liveThinking === "off" ? `${s} · thinking off` : `${s} · ${liveThinking}`;
+	const provCount = footerData?.getAvailableProviderCount?.() ?? 1;
+	if (provCount > 1 && model) s = `(${model.provider}) ${s}`;
+	return s;
+}
+
+function contextUnit(statuses: Map<string, string> | undefined, ctx: any): string {
+	const bar = statuses?.get("context") || "";
+	const totals = computeUsageTotals(ctx?.sessionManager?.getEntries?.() ?? []);
 	const parts: string[] = [];
 	if (totals.input) parts.push(`↑${formatTokens(totals.input)}`);
 	if (totals.output) parts.push(`↓${formatTokens(totals.output)}`);
@@ -201,33 +220,18 @@ function buildStatsLine(width: number, ctx: any, footerData: any): string {
 	const cu = ctx?.getContextUsage?.();
 	const ctxWindow = cu?.contextWindow ?? liveModel?.contextWindow ?? 0;
 	const pct = cu?.percent;
-	const pctDisp = pct === null || pct === undefined
-		? `?/${formatTokens(ctxWindow)}`
-		: `${pct.toFixed(1)}%/${formatTokens(ctxWindow)}`;
-	parts.push(pctDisp);
-	let left = `${DIM}${parts.join(" ")}${RESET}`;
-	let leftW = vw(left);
-	if (leftW > width) { left = truncateToWidth(left, width, "…"); leftW = vw(left); }
-	const model = liveModel;
-	let right = model?.id || "no-model";
-	if (model?.reasoning) right = liveThinking === "off" ? `${right} • thinking off` : `${right} • ${liveThinking}`;
-	const provCount = footerData?.getAvailableProviderCount?.() ?? 1;
-	if (provCount > 1 && model) right = `(${model.provider}) ${right}`;
-	const rightW = vw(right);
-	if (leftW + 2 + rightW <= width) {
-		return `${left}${" ".repeat(Math.max(0, width - leftW - rightW))}${DIM}${right}${RESET}`;
-	}
-	const avail = width - leftW - 2;
-	if (avail > 0) {
-		const tr = truncateToWidth(right, avail, "");
-		return `${left}${" ".repeat(Math.max(0, width - leftW - vw(tr)))}${DIM}${tr}${RESET}`;
-	}
-	return left;
+	const pctDisp = pct === null || pct === undefined ? (ctxWindow ? `?/${formatTokens(ctxWindow)}` : "") : `${pct.toFixed(1)}%`;
+	return [bar, pctDisp, ...parts].filter(Boolean).join(" · ");
 }
 
 function retroLines(width: number, ctx: any, footerData: any): string[] {
 	const out: string[] = [];
-	out.push(`${DIM}${H.repeat(Math.max(0, width))}${RESET}`);
+	// Separator rule below the input, with the model right-aligned on it.
+	const mdl = modelString(footerData);
+	const mdlW = mdl.length;
+	const lead = mdlW > 0 ? ` ${mdl} ` : "";
+	const ruleW = Math.max(0, width - lead.length);
+	out.push(`${DIM}${lead}${H.repeat(ruleW)}${RESET}`);
 	try {
 		const sm = ctx?.sessionManager;
 		const cwd = formatCwd(sm?.getCwd?.() ?? ctx?.cwd ?? process.cwd());
@@ -236,17 +240,15 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 		const tag = pluginVersionTag();
 		const folder = `${CYAN}${FOLDER}${RESET}`;
 		const sid = sessionIdTag();
-		let left1 = `${tag ? `${tag}  ` : ""}${folder}  ${cwd}`;
+		let left1 = `${tag ? `${tag}  ` : ""}${folder}  ${cwd}`.trimStart();
+		if (tag) left1 = ` ${left1}`;
 		if (branch) left1 += ` (${branch})`;
 		if (sessionName) left1 += ` • ${sessionName}`;
 		if (sid) left1 += `  ${sid}`;
 		const statuses = footerData?.getExtensionStatuses?.();
-		const contextRaw = statuses?.get("context") || "";
-		const meta = META["context"];
-		const right1 = contextRaw ? `${meta.color}${meta.icon}${RESET} ${contextRaw}` : "";
+		const right1 = contextUnit(statuses, ctx);
 		out.push(renderPair(left1, right1, width));
 	} catch { /* best-effort */ }
-	try { out.push(buildStatsLine(width, ctx, footerData)); } catch { /* best-effort */ }
 	try {
 		const statuses = footerData?.getExtensionStatuses?.();
 		if (statuses && statuses.size > 0) {
