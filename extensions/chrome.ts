@@ -266,7 +266,7 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 		const statuses = footerData?.getExtensionStatuses?.();
 		if (statuses && statuses.size > 0) {
 			const entries = Array.from(statuses.entries())
-				.filter(([key]) => !VOLATILE.has(key) && key !== "context");
+				.filter(([key, v]) => !VOLATILE.has(key) && key !== "context" && v);
 			const sm = new Map(entries);
 			const consumed = new Set<string>();
 			const cells: { rank: number; text: string }[] = [];
