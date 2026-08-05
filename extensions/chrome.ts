@@ -174,6 +174,10 @@ let liveThinking: string = "off";
 let statusTracked = false;
 function trackStatus(pi: any, ctx: any): void {
 	liveModel = ctx?.model ?? liveModel;
+	// ctx.thinkingLevel is the session's initial level (settings defaultThinkingLevel,
+	// e.g. "high"). Seed from it so the footer doesn't show "off" until the first
+	// thinking_level_select event — that event only fires on an explicit change.
+	if (ctx?.thinkingLevel) liveThinking = ctx.thinkingLevel;
 	if (!statusTracked && pi) {
 		statusTracked = true;
 		pi.on("model_select", (e: any) => { liveModel = e?.model ?? liveModel; });
