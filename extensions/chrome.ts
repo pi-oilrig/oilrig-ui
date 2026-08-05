@@ -52,9 +52,9 @@ function rankOf(key: string): number { return META[key]?.rank ?? 100; }
 // ranked by the lowest member rank. Members consumed are dropped from the
 // individual stream so they don't also appear alone.
 const COMPOUND: string[][] = [
-	["wt", "hub"],         // walkie-talkie + loader: communication + session knowledge
-	["toolband", "mcp"], // active tools + MCP servers: the tool surface
-	["ontology", "kern"], // entity index + memory graph: what the session knows
+	["wt", "hub"],                    // walkie-talkie + loader: communication + session knowledge
+	["trunk", "toolband", "mcp"],    // worktree + active tools + MCP servers: the tool surface
+	["ontology", "kern", "persona"], // entity index + memory graph + persona: what the session knows
 ];
 
 // Short session id — the first 8 chars of PI_SESSION_ID are the walkie-talkie
@@ -216,7 +216,7 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 function modelString(footerData: any): string {
 	const model = liveModel;
 	let s = model?.id || "no-model";
-	if (model?.reasoning) s = liveThinking === "off" ? `${s} │ thinking off` : `${s} │ ${liveThinking}`;
+	if (model?.reasoning) s = liveThinking === "off" ? `${s} │ off` : `${s} │ ${liveThinking}`;
 	const provCount = footerData?.getAvailableProviderCount?.() ?? 1;
 	if (provCount > 1 && model) s = `(${model.provider}) ${s}`;
 	return s;
