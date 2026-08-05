@@ -213,7 +213,7 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 	return { input, output, cacheRead, cacheWrite, cost };
 }
 
-const THINK = "\uF0EB"; //  nf-fa-lightbulb-o (thinking effort)
+const THINK = "\uF5DC"; //  nf-fa-brain (thinking effort)
 
 function modelString(footerData: any): string {
 	const model = liveModel;
