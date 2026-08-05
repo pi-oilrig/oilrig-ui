@@ -35,7 +35,7 @@ const META: Record<string, { icon: string; color: string; rank: number }> = {
 	rigor: { icon: "\uF00C", color: GREEN, rank: 5 },      //  nf-fa-check    (what is broken)
 	watch: { icon: "\uF06E", color: MAGENTA, rank: 6 },    //  nf-fa-eye      (what is armed)
 	loop: { icon: "\uF01E", color: MAGENTA, rank: 7 },      //  nf-fa-repeat   (what is looping)
-	trunk: { icon: "\uF1BB", color: MAGENTA, rank: 8 },     //  nf-fa-tree (experiment worktree)
+	trunk: { icon: "\uF0E69", color: MAGENTA, rank: 8 },     // nf-md-tree_outline (experiment worktree)
 	ontology: { icon: "\uF0E7", color: MAGENTA, rank: 9 }, //  nf-fa-bolt     (what is this called)
 	persona: { icon: "\uF007", color: CYAN, rank: 10 },     //  nf-fa-user
 	toolband: { icon: "\uF0AD", color: AMBER, rank: 11 },   //  nf-fa-wrench   (active tools / schema KB)
