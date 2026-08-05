@@ -38,6 +38,18 @@ const META: Record<string, { icon: string; color: string; rank: number }> = {
 
 function rankOf(key: string): number { return META[key]?.rank ?? 100; }
 
+// Short session id — the first 8 chars of PI_SESSION_ID are the walkie-talkie
+// address prefix (wt_send `to`). Shown dim after the cwd so you can copy it to
+// reach this session from another pi.
+let sessionIdCache: string | null | undefined;
+function sessionIdTag(): string | null {
+	if (sessionIdCache !== undefined) return sessionIdCache;
+	const id = (process.env.PI_SESSION_ID || "").trim();
+	const prefix = id ? id.slice(0, 8) : "";
+	sessionIdCache = prefix ? `${DIM}${prefix}${RESET}` : null;
+	return sessionIdCache;
+}
+
 function pkgRoot(): string | null {
 	let dir: string | null;
 	try { dir = dirname(fileURLToPath(import.meta.url)); } catch { return null; }
@@ -134,7 +146,9 @@ function wrapFooter(ui: any): void {
 					const cwd = (lines[0] || "").trim();
 					const tag = pluginVersionTag();
 					const folder = `${CYAN}${FOLDER}${RESET}`;
-					const left1 = tag ? `${tag}  ${folder}  ${cwd}` : `${folder}  ${cwd}`;
+					const sid = sessionIdTag();
+					const base1 = tag ? `${tag}  ${folder}  ${cwd}` : `${folder}  ${cwd}`;
+					const left1 = sid ? `${base1}  ${sid}` : base1;
 					const statuses = footerData?.getExtensionStatuses?.();
 					const contextRaw = statuses?.get("context") || "";
 					const meta = META["context"];
