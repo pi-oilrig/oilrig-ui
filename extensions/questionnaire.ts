@@ -24,6 +24,12 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+
+// The width handed to a custom render can exceed the real terminal width (a
+// pi-tui region-sizing quirk), so every line is capped to `process.stdout.columns`.
+// Without this, `─`.repeat(w) overflowed and crashed pi on a 140-col terminal.
+const termCols = (): number =>
+	typeof process !== "undefined" && process.stdout && process.stdout.columns ? process.stdout.columns : 0;
 import { Type } from "typebox";
 
 interface Opt {
@@ -311,7 +317,8 @@ export function installQuestionnaire(pi: ExtensionAPI): void {
 
 				const render = (width: number): string[] => {
 					if (cache) return cache;
-					const w = Math.max(20, width);
+					const tc = termCols();
+					const w = Math.max(20, tc ? Math.min(width, tc) : width);
 					const out: string[] = [];
 					const put = (prefix: string, text: string) => {
 						const pw = visibleWidth(prefix);
