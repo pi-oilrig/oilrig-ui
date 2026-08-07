@@ -69,7 +69,7 @@ writeFileSync(
 );
 
 // Copy extension files
-for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "slot.ts", "questionnaire.ts", "retro.ts", "context.ts"])
+for (const part of ["index.ts", "style.ts", "editor.ts", "chrome.ts", "starship.ts", "slot.ts", "questionnaire.ts", "retro.ts", "context.ts", "above.ts"])
 	writeFileSync(join(SCRATCH, "extensions", part), readFileSync(join(ROOT, "extensions", part), "utf8"));
 
 const results = [];
@@ -164,7 +164,49 @@ check("retro footer installed", typeof footerFactory === "function");
 	check("mode bar paints with the editor's borderColor", comp.render(80)[0].startsWith("\x1b[35m"));
 	delete globalThis.__oilrigModePaint;
 }
-check("model label sits above the input", widgets.some(([k, v]) => k === "model" && String(v).includes("no-model")));
+// ── the above-editor stack ──
+// pi has no widget ordering: re-setting a key moves it to the end of the
+// renderer's Map, so two keys swap places on every repaint. One key, sorted.
+{
+	const above = await import(pathToFileURL(join(SCRATCH, "extensions/above.ts")).href);
+	const { setAboveBlock, installAbove, teardownAbove, __aboveLinesForTest: lines } = above;
+
+	const set = [];
+	const stackUi = { setWidget: (k, v) => set.push([k, v]) };
+
+	// a block registered before install must not be dropped
+	globalThis.__oilrigAbovePending = [["early", 5, ["EARLY"]]];
+	installAbove({ ui: stackUi });
+	check("the pending queue is drained on install", lines().includes("EARLY"));
+	check("the pending queue is emptied, not replayed", globalThis.__oilrigAbovePending.length === 0);
+	check("install publishes the registry for other packages", typeof globalThis.__oilrigAbove?.set === "function");
+
+	// order is by priority, and does not move when a block repaints
+	setAboveBlock("model", 20, ["MODEL"]);
+	setAboveBlock("recap", 10, ["RECAP-A", "RECAP-B"]);
+	check("blocks render in priority order", lines().join("|") === "EARLY|RECAP-A|RECAP-B|MODEL");
+	setAboveBlock("recap", 10, ["RECAP-C"]);
+	check("repainting a block does not move it", lines().join("|") === "EARLY|RECAP-C|MODEL");
+	setAboveBlock("model", 20, ["MODEL2"]);
+	check("repainting the other block does not move it either", lines().join("|") === "EARLY|RECAP-C|MODEL2");
+
+	// one widget key, always
+	check("the stack sets exactly one widget key", new Set(set.map(([k]) => k)).size === 1 && set[0][0] === "above");
+
+	// an empty block leaves no hole
+	setAboveBlock("early", 5, []);
+	check("an empty block is removed, not blanked", lines().join("|") === "RECAP-C|MODEL2");
+	setAboveBlock("recap", 10, undefined);
+	setAboveBlock("model", 20, undefined);
+	check("the last block out clears the widget", set[set.length - 1][1] === undefined);
+
+	teardownAbove();
+	check("teardown drops the registry", globalThis.__oilrigAbove === undefined);
+	above.__resetAboveForTest();
+}
+
+check("the model label is a block in the stack, not its own widget",
+	widgets.every(([k]) => k !== "model") && widgets.some(([k, v]) => k === "above" && String(v).includes("no-model")));
 
 // ── mode bar: flat line + one travelling wave ──
 {

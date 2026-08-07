@@ -7,7 +7,7 @@
 //      thick rule painted in the editor's live borderColor). Line 2: CWD +
 //      context bar. Lines 3+: extension pairs. No box borders, no side rails,
 //      no greedy packing.
-//   3. model widget: the model/thinking label above the input box.
+//   3. model label: a block in the shared above-editor stack (above.ts).
 
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
@@ -15,6 +15,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "nod
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AMBER, CYAN, DIM, GREEN, MAGENTA, RED, RESET, vw, FOLDER } from "./retro.ts";
+import { installAbove, setAboveBlock, teardownAbove } from "./above.ts";
 
 // Retro palette: amber primary, green for active, dim for metadata
 const PALETTE = [CYAN, GREEN, AMBER, MAGENTA, RED];
@@ -181,6 +182,9 @@ let provCount = 1;
 function trackStatus(pi: any, ctx: any): void {
 	liveCtx = ctx ?? liveCtx;
 	liveModel = ctx?.model ?? liveModel;
+	// The stack owns the one aboveEditor widget; install it before any block
+	// tries to paint into it.
+	if (ctx?.ui) installAbove(ctx);
 	// ctx.thinkingLevel is the session's initial level (settings defaultThinkingLevel,
 	// e.g. "high"). Seed from it so the footer doesn't show "off" until the first
 	// thinking_level_select event — that event only fires on an explicit change.
@@ -192,25 +196,23 @@ function trackStatus(pi: any, ctx: any): void {
 		// The working window: the mode bar pulses between these two.
 		pi.on("agent_start", () => setBusy(true));
 		pi.on("agent_end", () => setBusy(false));
-		pi.on("session_shutdown", () => setBusy(false));
+		pi.on("session_shutdown", () => { setBusy(false); teardownAbove(); });
 	}
 }
 
-// ── model widget ──────────────────────────────────────────────────────────
-// The model label used to ride on the footer's rule line. It sits above the
-// input box now (setWidget's default placement is aboveEditor), where the
-// footer's first line is the mode bar instead.
-const MODEL_WIDGET = "model";
+// ── model label ───────────────────────────────────────────────────────────
+// The label used to ride on the footer's rule line, which is the mode bar
+// now. It sits above the input instead — as a block in the shared
+// above-editor stack, never its own widget: two widget keys reorder
+// themselves on every repaint (see above.ts). Priority 20 puts it under the
+// recap, closest to the prompt.
+const MODEL_PRIORITY = 20;
 
 function renderModelWidget(): void {
-	const ui = liveCtx?.ui;
-	if (!ui?.setWidget) return;
-	try {
-		const s = modelString();
-		// Two-column indent matches the editor's own, so the label lines up
-		// with the prompt text under it.
-		ui.setWidget(MODEL_WIDGET, s ? [`  ${DIM}${s}${RESET}`] : undefined);
-	} catch { /* best-effort */ }
+	const s = modelString();
+	// Two-column indent matches the editor's own, so the label lines up
+	// with the prompt text under it.
+	setAboveBlock("model", MODEL_PRIORITY, s ? [`  ${DIM}${s}${RESET}`] : undefined);
 }
 
 function formatTokens(count: number): string {
