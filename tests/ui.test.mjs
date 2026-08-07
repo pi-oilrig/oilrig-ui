@@ -8,7 +8,7 @@
 // billboard panel (folded in from pi-billboard) toggles min/max, keeps its
 // slot registry on globalThis and clears on shutdown.
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -39,7 +39,7 @@ writeFileSync(join(TUI, "keys.js"), `export const decodePrintableKey = () => und
 writeFileSync(join(TUI, "index.js"), `
 export const visibleWidth = (s) => String(s).replace(/\\x1b\\[[0-9;]*m/g, "").length;
 export const truncateToWidth = (s, w) => { const vis = String(s).replace(/\x1b\[[0-9;]*m/g, ""); return vis.length <= w ? String(s) : String(s).slice(0, w); };
-export const CURSOR_MARKER = "\\x1b[7m";
+export const CURSOR_MARKER = "\\x1b_pi:c\\x07";
 export const fuzzyFilter = (items, q, fn) => items.filter(i => fn(i).toLowerCase().includes(String(q).toLowerCase()));
 export const matchesKey = (data, key) => data === key;
 export const getKeybindings = () => ({ matches: () => false });
@@ -237,46 +237,76 @@ check("input lines keep the two-column indent", ed.render(80).every((l) => l.sta
 check("editor publishes its mode paint for the footer bar", typeof globalThis.__oilrigModePaint === "function");
 check("editor publishes a repaint hook for the pulse", typeof globalThis.__oilrigRequestRender === "function");
 
-// ── cursor: focus reporting + idle blink ──
+// ── cursor: painted caret, focus + idle blink ──
 {
 	const ed2 = await import(pathToFileURL(join(SCRATCH, "extensions/editor.ts")).href);
-	const { consumeFocusEvents, setCursorFocused, noteCursorActivity, teardownCursor } = ed2;
+	const { consumeFocusEvents, setCursorFocused, noteCursorActivity, paintCursor, teardownCursor } = ed2;
 
-	const wrote = [];
-	const origWrite = process.stdout.write.bind(process.stdout);
-	process.stdout.write = (s) => { wrote.push(String(s)); return true; };
-	const since = () => { const s = wrote.join(""); wrote.length = 0; return s; };
+	const MARK = "\x1b_pi:c\x07"; // must equal pi-tui's CURSOR_MARKER
+	const caret = (g) => `pre${MARK}\x1b[7m${g}\x1b[0m post`;
+	const inverse = (s) => s.includes("\x1b[7m");
 
-	// focus replies are consumed, never typed into the box
+	// the cursor pi shows is painted text, not the hardware cursor
+	check("focused caret keeps the inverse block", inverse(paintCursor(caret(" "))));
+	check("a line with no caret marker is untouched", paintCursor("plain line") === "plain line");
+	// selection highlighting is inverse too, but ends ESC[27m and has no marker
+	const sel = "a\x1b[7mbc\x1b[27md";
+	check("selection highlight is not mistaken for the caret", paintCursor(sel) === sel);
+
+	// unfocused → outline, never a filled block
 	check("focus-out reply is stripped from the key stream", consumeFocusEvents("\x1b[O") === "");
-	check("unfocused cursor is an underline", since().includes("\x1b[4 q"));
+	const blurEmpty = paintCursor(caret(" "));
+	check("unfocused caret on an empty cell is a hollow rectangle", blurEmpty.includes("▯") && !inverse(blurEmpty));
+	const blurChar = paintCursor(caret("a"));
+	check("unfocused caret over a character underlines it", blurChar.includes("\x1b[4ma\x1b[24m") && !inverse(blurChar));
+	check("the outline caret keeps the marker for IME placement", blurEmpty.includes(MARK));
+
 	check("focus-in reply is stripped too", consumeFocusEvents("\x1b[I") === "");
-	check("refocused cursor is a steady block", since().includes("\x1b[2 q"));
+	check("refocused caret is a filled block again", inverse(paintCursor(caret(" "))));
 	check("a focus reply mixed with keys keeps the keys", consumeFocusEvents("\x1b[Oab") === "ab");
-	since();
+	consumeFocusEvents("\x1b[I");
 	check("ordinary keys pass through untouched", consumeFocusEvents("hello") === "hello");
 	check("a plain escape sequence is not eaten", consumeFocusEvents("\x1b[A") === "\x1b[A");
 
 	// idle → blink, then a keystroke → steady again
-	setCursorFocused(true);
-	since();
-	await new Promise((r) => setTimeout(r, 2700));
-	check("cursor blinks after the idle timeout", since().includes("\x1b[1 q"));
 	noteCursorActivity();
-	check("typing restores a steady cursor", since().includes("\x1b[2 q"));
+	check("a caret in use does not blink", inverse(paintCursor(caret(" "))));
+	await new Promise((r) => setTimeout(r, 2700));
+	check("the caret blinks after the idle timeout", !inverse(paintCursor(caret(" "))));
+	noteCursorActivity();
+	check("typing makes the caret steady again", inverse(paintCursor(caret(" "))));
 
 	// an unfocused window does not start blinking behind your back
 	setCursorFocused(false);
-	since();
 	await new Promise((r) => setTimeout(r, 2700));
-	check("an unfocused cursor never blinks", !since().includes("\x1b[1 q"));
+	const stillBlurred = paintCursor(caret(" "));
+	check("an unfocused caret never blinks", stillBlurred.includes("▯"));
 
+	const wrote = [];
+	const origWrite = process.stdout.write.bind(process.stdout);
+	process.stdout.write = (s) => { wrote.push(String(s)); return true; };
 	teardownCursor();
-	const bye = since();
-	check("shutdown turns focus reporting off and restores the cursor",
-		bye.includes("\x1b[?1004l") && bye.includes("\x1b[2 q"));
-
 	process.stdout.write = origWrite;
+	check("shutdown turns focus reporting off", wrote.join("").includes("\x1b[?1004l"));
+}
+
+// The caret rewriting is anchored on pi-tui's CURSOR_MARKER, so a stub that
+// spells it differently would make every check above pass vacuously.
+{
+	const real = ["../../../node_modules/@earendil-works/pi-tui/dist/tui.js",
+		"../node_modules/@earendil-works/pi-tui/dist/tui.js"]
+		.map((r) => new URL(r, import.meta.url).pathname)
+		.find((f) => existsSync(f));
+	if (real) {
+		const m = readFileSync(real, "utf8").match(/CURSOR_MARKER\s*=\s*"((?:[^"\\]|\\.)*)"/);
+		const stub = readFileSync(new URL("./ui.test.mjs", import.meta.url).pathname, "utf8")
+			.match(/export const CURSOR_MARKER = "((?:[^"\\]|\\.)*)";/);
+		// the stub literal is doubled once by the template that writes it
+		check("the stub's CURSOR_MARKER is pi-tui's real one",
+			!!m && !!stub && m[1] === stub[1].replace(/\\\\/g, "\\"));
+	} else {
+		check("pi-tui not installed \u2014 marker fidelity unchecked", true);
+	}
 }
 let cutThrew = false;
 try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }

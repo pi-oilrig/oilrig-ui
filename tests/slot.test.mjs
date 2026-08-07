@@ -28,7 +28,7 @@ writeFileSync(join(TUI, "utils.js"), `export const extractAnsiCode = () => null;
 writeFileSync(join(TUI, "keys.js"), `export const decodePrintableKey = () => undefined;`);
 writeFileSync(join(TUI, "index.js"), `
 export const visibleWidth = (s) => String(s).replace(/\\x1b\\[[0-9;]*m/g, "").length;
-export const CURSOR_MARKER = "\\x1b[7m";
+export const CURSOR_MARKER = "\\x1b_pi:c\\x07";
 export const fuzzyFilter = (items, q, fn) => items.filter(i => fn(i).toLowerCase().includes(String(q).toLowerCase()));
 export const matchesKey = (data, key) => data === key;
 export const getKeybindings = () => ({ matches: () => false });

@@ -590,73 +590,104 @@ function stripRails(line: string): string | null {
 	return inner;
 }
 
-// ── cursor ───────────────────────────────────────────────────────────
+// ── cursor ─────────────────────────────────────────────────────────────────
 //
-// pi draws the *hardware* cursor: the editor emits CURSOR_MARKER, pi-tui finds
-// it, strips it and positions the real terminal cursor there
-// (`positionHardwareCursor`). So the cursor's shape is the terminal's, and
-// DECSCUSR (`ESC [ <n> SP q`) is the way to change it — nothing is painted
-// into the text, which is the whole point after the ▌ bar left the input box.
+// The cursor pi shows is *painted text*, not the terminal's own cursor:
+// pi-tui's `showHardwareCursor` is off unless PI_HARDWARE_CURSOR=1, so the real
+// cursor stays hidden and the editor draws an inverse-video cell
+// (`ESC[7m<grapheme>ESC[0m`) where the caret belongs. DECSCUSR therefore does
+// nothing here — a cursor that is text can only be restyled as text, in the
+// render pipeline. CURSOR_MARKER is emitted immediately before that inverse
+// run and nothing else in the frame carries it, so it is the anchor: selection
+// highlighting also uses inverse but terminates with ESC[27m and is never
+// preceded by the marker.
 //
 // Three states:
-//   unfocused        → underline. DECSCUSR has block, underline and bar and no
-//                      hollow block, so a true outline is not expressible;
-//                      underline is the conventional "not here" cursor, and a
-//                      terminal that hollows an unfocused cursor by itself
-//                      still does that on top.
-//   focused, typing  → steady block.
-//   focused, idle    → blinking block after IDLE_BLINK_MS.
+//   unfocused        → outline. On an empty cell a hollow rectangle; over a
+//                      character, that character underlined. Neither fills the
+//                      cell, which is the point — the caret is visible but
+//                      plainly not where typing goes.
+//   focused, typing  → the inverse block, untouched.
+//   focused, idle    → blinks, IDLE_BLINK_MS after the last keystroke.
 //
 // pi-tui never enables focus reporting, so this turns on DECSET 1004 and
-// consumes the `ESC [ I` / `ESC [ O` replies in handleInput before the editor
-// can read them as keys — unconsumed, they would type `[I` into the box.
-const CURSOR_BLINK_BLOCK = "\x1b[1 q";
-const CURSOR_STEADY_BLOCK = "\x1b[2 q";
-const CURSOR_STEADY_UNDERLINE = "\x1b[4 q";
+// consumes the `ESC [ I` / `ESC [ O` replies through the tui's own input
+// listener — left in the stream they type `[I` into the box.
+// Derived from the marker rather than spelled out again: two copies of the
+// same escape sequence is exactly how they drift apart.
+const CURSOR_RE = new RegExp(
+	`${CURSOR_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\x1b\\[7m([^\\x1b]*)\\x1b\\[0m`,
+);
+const HOLLOW = "▯";
 const FOCUS_REPORTING_ON = "\x1b[?1004h";
 const FOCUS_REPORTING_OFF = "\x1b[?1004l";
 const FOCUS_EVENT_RE = /\x1b\[[IO]/g;
 const IDLE_BLINK_MS = 2500;
+const BLINK_MS = 530;
 
-type CursorShape = "block" | "blink" | "underline";
-let cursorShape: CursorShape | null = null;
 let cursorFocused = true;
+let blinking = false;
+let blinkOn = true;
 let idleTimer: any = null;
+let blinkTimer: any = null;
+let cursorRepaint: (() => void) | null = null;
 
-function writeCursor(shape: CursorShape): void {
-	if (cursorShape === shape) return;
-	cursorShape = shape;
-	const seq =
-		shape === "underline"
-			? CURSOR_STEADY_UNDERLINE
-			: shape === "blink"
-				? CURSOR_BLINK_BLOCK
-				: CURSOR_STEADY_BLOCK;
-	try { process.stdout.write(seq); } catch { /* best-effort */ }
+function repaintCursor(): void {
+	try { cursorRepaint?.(); } catch { /* best-effort */ }
+}
+
+function stopBlink(): void {
+	if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+	blinking = false;
+	blinkOn = true;
+}
+
+function startBlink(): void {
+	if (blinkTimer || !cursorFocused) return;
+	blinking = true;
+	blinkOn = false;
+	repaintCursor();
+	blinkTimer = setInterval(() => { blinkOn = !blinkOn; repaintCursor(); }, BLINK_MS);
+	// Never a reason to keep the process alive.
+	(blinkTimer as any).unref?.();
 }
 
 function armIdleBlink(): void {
 	if (idleTimer) clearTimeout(idleTimer);
-	idleTimer = setTimeout(() => { if (cursorFocused) writeCursor("blink"); }, IDLE_BLINK_MS);
-	// Never a reason to keep the process alive.
+	idleTimer = setTimeout(startBlink, IDLE_BLINK_MS);
 	(idleTimer as any).unref?.();
 }
 
 export function noteCursorActivity(): void {
 	if (!cursorFocused) return;
-	writeCursor("block");
+	const wasBlinking = blinking;
+	stopBlink();
 	armIdleBlink();
+	if (wasBlinking) repaintCursor();
 }
 
 export function setCursorFocused(focused: boolean): void {
+	if (cursorFocused === focused) return;
 	cursorFocused = focused;
-	if (focused) {
-		writeCursor("block");
-		armIdleBlink();
-	} else {
-		if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-		writeCursor("underline");
-	}
+	stopBlink();
+	if (focused) armIdleBlink();
+	else if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+	repaintCursor();
+}
+
+// Restyle the painted caret for the current state. Anything without the
+// marker — an unfocused editor emits none — is returned untouched.
+export function paintCursor(line: string): string {
+	if (!line.includes(CURSOR_MARKER)) return line;
+	return line.replace(CURSOR_RE, (_m, g: string) => {
+		if (!cursorFocused) {
+			return g === "" || g === " "
+				? `${CURSOR_MARKER}${HOLLOW}`
+				: `${CURSOR_MARKER}\x1b[4m${g}\x1b[24m`;
+		}
+		if (blinking && !blinkOn) return `${CURSOR_MARKER}${g === "" ? " " : g}`;
+		return `${CURSOR_MARKER}\x1b[7m${g}\x1b[0m`;
+	});
 }
 
 // Strip the focus replies out of an input chunk, applying each in order.
@@ -675,32 +706,54 @@ export function consumeFocusEvents(data: string): string {
 function installCursor(editor: any): void {
 	if ((globalThis as any).__oilrigCursorInstalled) return;
 	(globalThis as any).__oilrigCursorInstalled = true;
-	try { process.stdout.write(FOCUS_REPORTING_ON); } catch { /* best-effort */ }
-	setCursorFocused(true);
 
-	const orig = editor.handleInput?.bind(editor);
-	if (typeof orig !== "function") return;
-	editor.handleInput = function (this: any, data: string) {
-		try {
+	cursorRepaint = () => editor.tui?.requestRender?.();
+	try { process.stdout.write(FOCUS_REPORTING_ON); } catch { /* best-effort */ }
+	armIdleBlink();
+
+	// Focus replies must never reach a key handler; the tui's own listener
+	// chain runs before component dispatch and can consume them outright.
+	const tui = editor.tui;
+	if (typeof tui?.addInputListener === "function") {
+		tui.addInputListener((data: string) => {
 			const rest = consumeFocusEvents(data);
-			if (rest !== data) {
-				this.tui?.requestRender?.();
-				if (!rest) return; // the chunk was nothing but focus replies
+			if (rest === data) return undefined;
+			return rest.length ? { data: rest } : { consume: true };
+		});
+	}
+
+	// Every keystroke is activity: a blinking cursor goes steady again.
+	const origInput = editor.handleInput?.bind(editor);
+	if (typeof origInput === "function") {
+		editor.handleInput = function (this: any, data: string) {
+			try {
+				const rest = typeof tui?.addInputListener === "function" ? data : consumeFocusEvents(data);
+				if (!rest) return;
 				noteCursorActivity();
-				return orig.call(this, rest);
-			}
-			noteCursorActivity();
-		} catch { /* never block a keystroke */ }
-		return orig.call(this, data);
+				return origInput.call(this, rest);
+			} catch { /* never block a keystroke */ }
+			return origInput.call(this, data);
+		};
+	}
+
+	// Outermost render wrapper: restyle the caret after every other layer has
+	// had its say.
+	const origRender = editor.render.bind(editor);
+	editor.render = (width: number): string[] => {
+		try {
+			return origRender(width).map(paintCursor);
+		} catch (err) {
+			console.error("[oilrig-ui] cursor render error:", (err as Error).message);
+			return origRender(width);
+		}
 	};
 }
 
 export function teardownCursor(): void {
+	stopBlink();
 	if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-	try {
-		process.stdout.write(FOCUS_REPORTING_OFF + CURSOR_STEADY_BLOCK);
-	} catch { /* best-effort */ }
-	cursorShape = null;
+	cursorRepaint = null;
+	try { process.stdout.write(FOCUS_REPORTING_OFF); } catch { /* best-effort */ }
 	(globalThis as any).__oilrigCursorInstalled = false;
 }
 
