@@ -284,11 +284,10 @@ const LEFT = [0x01, 0x02, 0x04, 0x40];
 const RIGHT = [0x08, 0x10, 0x20, 0x80];
 
 // Endcaps, pointing inward: the bar is a segment, and a segment reads as one
-// thing when both ends are terminated. Small triangles rather than ▶/◀ — those
-// two have an emoji presentation and render double-width in some fonts, which
-// would break the exact-width contract modeBar checks before painting.
-const CAP_L = "\u25C2"; // ◂ — small triangle at x-height, aligns with braille
-const CAP_R = "\u25B8"; // ▸
+// thing when both ends are terminated. Big triangles fill the full cell height
+// so they sit dead center — no alignment mismatch with the inner braille line.
+const CAP_L = "\u25B6"; // ▶
+const CAP_R = "\u25C0"; // ◀
 
 let busy = false;
 let phase = 0;
@@ -331,17 +330,12 @@ function barGlyphs(width: number): string {
 }
 
 function modeBar(width: number): string {
-	let bar = barGlyphs(Math.max(0, width));
-	// Apply bold to caps on the raw glyphs so character indexing is correct.
-	if (bar.length >= 3) {
-		bar = `\x1b[1m${bar[0]}\x1b[22m${bar.slice(1, -1)}\x1b[1m${bar.slice(-1)}\x1b[22m`;
-	}
+	const bar = barGlyphs(Math.max(0, width));
 	const paint = (globalThis as any).__oilrigModePaint;
 	if (typeof paint === "function") {
 		const painted = safePaint(paint, bar);
 		if (painted !== null) return painted;
 	}
-	// dim fallthrough when no mode paint function
 	return `${DIM}${bar}${RESET}`;
 }
 

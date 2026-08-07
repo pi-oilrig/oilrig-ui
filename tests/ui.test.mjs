@@ -153,7 +153,7 @@ check("retro footer installed", typeof footerFactory === "function");
 	const lines = comp.render(80);
 	check("footer renders a separator + lines", Array.isArray(lines) && lines.length >= 2);
 	const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
-	check("footer line 1 is the full-width capped mode line", plain(lines[0]) === `◂${"⠤".repeat(78)}▸`);
+	check("footer line 1 is the full-width capped mode line", plain(lines[0]) === `▶${"⠤".repeat(78)}◀`);
 	check("no thin rule left in the footer", !lines.some((l) => plain(l).includes("─")));
 	check("the model label left the footer", !lines.some((l) => plain(l).includes("no-model")));
 	// the ▏ rail down the left of the status block is gone
@@ -238,8 +238,8 @@ check("the model label is a block in the stack, not its own widget",
 	const line = (s) => s.slice(1, -1);
 
 	const idle = glyphs(80, false, 0);
-	check("idle bar has right-pointing cap on the left", idle[0] === "◂");
-	check("idle bar has left-pointing cap on the right", idle[79] === "▸");
+	check("idle bar has right-pointing cap on the left", idle[0] === "▶");
+	check("idle bar has left-pointing cap on the right", idle[79] === "◀");
 	check("the line between caps is flat braille", line(idle) === FLAT.repeat(INNER));
 	check("idle line is braille, not a block rule", isBraille(line(idle)) && !idle.includes("▀"));
 	check("the caps are one cell each, so the bar fits", idle.length === 80 && [...idle].length === 80);
@@ -247,7 +247,7 @@ check("the model label is a block in the stack, not its own widget",
 
 	const f0 = glyphs(80, true, 40);
 	const f1 = glyphs(80, true, 46);
-	check("working bar keeps both caps", [f0, f1].every((f) => f[0] === "◂" && f[79] === "▸"));
+	check("working bar keeps both caps", [f0, f1].every((f) => f[0] === "▶" && f[79] === "◀"));
 	check("inner segment is braille", isBraille(line(f0)) && isBraille(line(f1)));
 	check("the wave never changes the bar width", [f0, f1].every((f) => f.length === 80));
 	check("every frame is exactly one cell per column", [...f1].length === 80);
