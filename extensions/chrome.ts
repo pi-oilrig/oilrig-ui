@@ -248,12 +248,21 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 }
 
 const THINK = "\uE28C"; //  nf-fae-brain (thinking effort)
+const BLINK = "\x1b[5m"; // ANSI slow blink
+
+let blinkBusy = false;
+
+function repaintBar(): void {
+	const r = (globalThis as any).__oilrigRequestRender;
+	if (typeof r === "function") try { r(); } catch { /* best-effort */ }
+}
 
 // The line between the caps — always middle dots (·). No wave, no braille
 // animation. The only motion on the bar is the meter: caps widen as tokens
 // flow. The dots are dead center, same vertical zone as the big triangles.
 function lineGlyphs(width: number): string {
-	return "\u00B7".repeat(width);
+	const dots = "\u00B7".repeat(width);
+	return blinkBusy ? `${BLINK}${dots}` : dots;
 }
 
 function modelString(): string {
@@ -509,6 +518,9 @@ export function installChrome(pi: any, ctx: any): void {
 		trackStatus(pi, ctx);
 		installFooter(ctx);
 		renderModelWidget();
+
+		pi.on("agent_start", () => { blinkBusy = true; repaintBar(); });
+		pi.on("agent_end", () => { blinkBusy = false; repaintBar(); });
 	} catch (err) {
 		console.error("[oilrig-ui] chrome install error:", (err as Error).message);
 	}
