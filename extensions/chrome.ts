@@ -210,9 +210,11 @@ const MODEL_PRIORITY = 20;
 
 function renderModelWidget(): void {
 	const s = modelString();
-	// Two-column indent matches the editor's own, so the label lines up
-	// with the prompt text under it.
-	setAboveBlock("model", MODEL_PRIORITY, s ? [`  ${DIM}${s}${RESET}`] : undefined);
+	// No indent of its own: pi wraps every widget line in `Text(line, 1, 0)`,
+	// so the block already starts at column 1 — the same edge as the recap
+	// above it, the prompt below it and the footer under that. A two-column
+	// indent here put the label alone at column 3.
+	setAboveBlock("model", MODEL_PRIORITY, s ? [`${DIM}${s}${RESET}`] : undefined);
 }
 
 function formatTokens(count: number): string {

@@ -208,6 +208,26 @@ check("retro footer installed", typeof footerFactory === "function");
 check("the model label is a block in the stack, not its own widget",
 	widgets.every(([k]) => k !== "model") && widgets.some(([k, v]) => k === "above" && String(v).includes("no-model")));
 
+// ── one left edge ──
+// pi wraps every widget line in `new Text(line, 1, 0)` (paddingX = 1), so a
+// stack block lands at column 1 for free. The footer prefixes one space and
+// the prompt indents one. A surface that adds its own indent on top sits a
+// column right of everything else — which is what the model label did.
+{
+	const { Text } = await import("@earendil-works/pi-tui");
+	check("pi pads widget lines by exactly one column", new Text("x", 1, 0).paddingX === 1);
+
+	const bare = (l) => l.replace(/\x1b\[[0-9;]*m/g, "");
+	const modelLines = widgets.filter(([k]) => k === "above").pop()[1];
+	check("no stack block indents on top of pi's padding",
+		modelLines.every((l) => !bare(l).startsWith(" ")), JSON.stringify(modelLines));
+
+	const { renderPair } = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
+	const footer = renderPair("left", "right", 80);
+	check("the footer starts at the same column",
+		footer.startsWith(" ") && !footer.startsWith("  "), JSON.stringify(footer.slice(0, 8)));
+}
+
 // ── mode bar: flat line + one travelling wave ──
 {
 	const chrome = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
@@ -288,7 +308,8 @@ check("selection is highlighted", ed.render(80).join("\n").includes("\x1b[7m"));
 // The input box carries no painted glyph: a ▌ down the left edge is inside the
 // terminal's own text and gets dragged along by any copy of a prompt.
 check("input box has no left bar to copy", ed.render(80).every((l) => !l.includes("▌")));
-check("input lines keep the two-column indent", ed.render(80).every((l) => l.startsWith("  ")));
+check("input lines sit at the workspace's one-column left edge",
+	ed.render(80).every((l) => l.startsWith(" ") && !l.startsWith("  ")));
 check("editor publishes its mode paint for the footer bar", typeof globalThis.__oilrigModePaint === "function");
 check("editor publishes a repaint hook for the pulse", typeof globalThis.__oilrigRequestRender === "function");
 

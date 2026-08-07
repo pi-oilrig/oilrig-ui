@@ -552,7 +552,7 @@ function installHistory(editor: any): void {
 // footer instead — this publishes the live editor's borderColor on globalThis
 // and chrome paints the status line's thick rule with it, outside anything a
 // mouse selection can reach.
-const INDENT = "  ";
+const INDENT = " ";
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 const plainText = (line: string): string => line.replace(ANSI_RE, "");
@@ -779,7 +779,7 @@ function installUnframe(editor: any, theme: any): void {
 			if (editor.tui?.requestRender)
 				(globalThis as any).__oilrigRequestRender = () => editor.tui.requestRender();
 			const prefix = INDENT;
-			const lines = origRender(Math.max(1, width - 2));
+			const lines = origRender(Math.max(1, width - INDENT.length));
 			const out: string[] = [];
 			for (const line of lines) {
 				if (isRule(line)) continue;
