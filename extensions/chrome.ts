@@ -283,6 +283,13 @@ const BRAILLE = 0x2800;
 const LEFT = [0x01, 0x02, 0x04, 0x40];
 const RIGHT = [0x08, 0x10, 0x20, 0x80];
 
+// Endcaps, pointing inward: the bar is a segment, and a segment reads as one
+// thing when both ends are terminated. Small triangles rather than ▶/◀ — those
+// two have an emoji presentation and render double-width in some fonts, which
+// would break the exact-width contract modeBar checks before painting.
+const CAP_L = "▸";
+const CAP_R = "◂";
+
 let busy = false;
 let phase = 0;
 let ticker: any = null;
@@ -298,7 +305,9 @@ function dotRow(x: number, head: number): number {
 	return Math.round(1.5 - 1.5 * s);
 }
 
-function barGlyphs(width: number): string {
+// The line between the caps. The wave lives here, so it enters and leaves
+// behind them rather than overwriting them.
+function lineGlyphs(width: number): string {
 	if (!busy) return String.fromCharCode(BRAILLE | LEFT[BASE_ROW] | RIGHT[BASE_ROW]).repeat(width);
 	const span = width * 2;
 	// The packet enters from off-screen left and leaves off-screen right, then
@@ -314,6 +323,11 @@ function barGlyphs(width: number): string {
 		out += String.fromCharCode(BRAILLE | LEFT[dotRow(2 * i, head)] | RIGHT[dotRow(2 * i + 1, head)]);
 	}
 	return out;
+}
+
+function barGlyphs(width: number): string {
+	if (width < 3) return lineGlyphs(width);
+	return CAP_L + lineGlyphs(width - 2) + CAP_R;
 }
 
 function modeBar(width: number): string {
