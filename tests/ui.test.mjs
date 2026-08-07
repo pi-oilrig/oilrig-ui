@@ -231,7 +231,7 @@ check("the model label is a block in the stack, not its own widget",
 // ── mode bar: flat line + one travelling wave ──
 {
 	const chrome = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
-	const { __barGlyphsForTest: glyphs, setBusy } = chrome;
+	const { __barGlyphsForTest: glyphs, setBusy, setMeter } = chrome;
 	const isBraille = (s) => [...s].every((c) => c.codePointAt(0) >= 0x2800 && c.codePointAt(0) <= 0x28ff);
 	const FLAT = "\u2501"; // ━ — heavy horizontal, dead center with ▶◀
 const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wave tests
@@ -275,6 +275,23 @@ const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wav
 	setBusy(true);
 	check("no ticker without a live tui to repaint", true); // asserted by the suite exiting
 	setBusy(false);
+
+	// ── dynamic cap meter ──
+	{
+		const high = glyphs(80, false, 0);
+		setMeter(0.5, 0);
+		const midUp = glyphs(80, false, 0);
+		setMeter(0, 1);
+		const maxDown = glyphs(80, false, 0);
+		setMeter(0, 0);
+		const restored = glyphs(80, false, 0);
+		setMeter(0, 0);
+		check("at meter=0 each cap is one triangle", high[0] === "▶" && high[79] === "◀");
+		check("meter adds repeated triangles", midUp[0] === "▶" && midUp[1] === "▶");
+		check("right cap grows left, inner line shrinks", maxDown[78] === "◀" && maxDown[77] === "◀");
+		check("bar total width stays constant", [high, midUp, maxDown, restored].every(b => b.length === 80));
+		check("resetting meter restores single caps", restored[0] === "▶" && restored[79] === "◀");
+	}
 }
 
 

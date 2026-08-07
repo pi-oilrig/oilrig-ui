@@ -289,8 +289,31 @@ const RIGHT = [0x08, 0x10, 0x20, 0x80];
 // rest — same cell zone as the triangles — and switches to braille during
 // animation (braille has sub-cell resolution for the traveling wave; the
 // vertical mismatch doesn't matter when the eye tracks motion).
-const CAP_L = "\u25B6"; // ▶
+//
+// The caps are dynamic meters: the left one (▶, pointing right into the bar)
+// grows rightward with upstream token rate; the right one (◀, pointing left
+// into the bar) grows leftward with downstream rate. Each cap is always one
+// big triangle (▶/◀) at the inner edge, plus extra repeats for activity — the
+// left cap grows right, the right cap grows left.
+const CAP = "\u25B6";	// ▶
 const CAP_R = "\u25C0"; // ◀
+const MAX_CAP = 4;
+let upMeter = 0;
+let downMeter = 0;
+
+// Map 0..1 meter level to extra cap repeats (0..MAX_CAP). The result always
+// has one big triangle plus level extra copies, so the bar never loses its
+// terminals.
+function capSegment(meter: number, ch: string): string {
+	const level = Math.round(Math.max(0, Math.min(1, meter || 0)) * MAX_CAP);
+	return ch.repeat(1 + level);
+}
+
+export function setMeter(up: number, down: number): void {
+	upMeter = up;
+	downMeter = down;
+	repaint();
+}
 
 let busy = false;
 let phase = 0;
@@ -332,7 +355,11 @@ function lineGlyphs(width: number): string {
 
 function barGlyphs(width: number): string {
 	if (width < 3) return lineGlyphs(width);
-	return CAP_L + lineGlyphs(width - 2) + CAP_R;
+	const upSeg = capSegment(upMeter, CAP);
+	const downSeg = capSegment(downMeter, CAP_R);
+	const capW = vw(upSeg) + vw(downSeg);
+	const innerW = Math.max(0, width - capW);
+	return upSeg + lineGlyphs(innerW) + downSeg;
 }
 
 function modeBar(width: number): string {
