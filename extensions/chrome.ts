@@ -194,9 +194,7 @@ function trackStatus(pi: any, ctx: any): void {
 		pi.on("model_select", (e: any) => { liveModel = e?.model ?? liveModel; renderModelWidget(); });
 		pi.on("thinking_level_select", (e: any) => { liveThinking = e?.level ?? liveThinking; renderModelWidget(); });
 		// The working window: the mode bar pulses between these two.
-		pi.on("agent_start", () => setBusy(true));
-		pi.on("agent_end", () => setBusy(false));
-		pi.on("session_shutdown", () => { setBusy(false); teardownAbove(); });
+		pi.on("session_shutdown", () => teardownAbove());
 	}
 }
 
@@ -251,6 +249,13 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 
 const THINK = "\uE28C"; //  nf-fae-brain (thinking effort)
 
+// The line between the caps — always middle dots (·). No wave, no braille
+// animation. The only motion on the bar is the meter: caps widen as tokens
+// flow. The dots are dead center, same vertical zone as the big triangles.
+function lineGlyphs(width: number): string {
+	return "\u00B7".repeat(width);
+}
+
 function modelString(): string {
 	const model = liveModel;
 	let s = model?.id || "no-model";
@@ -271,17 +276,7 @@ function modelString(): string {
 // wave rises and falls inside the row the bar already occupies; it can never
 // spill onto a second line. It runs only between agent_start and agent_end,
 // and only when something can actually repaint the frame.
-const FRAME_MS = 45;
-const STEP = 3;      // dot columns advanced per frame
-const PACKET = 20;   // dot columns spanned by the one wave — 10 cells
-const GAP = 44;      // flat dot columns between passes
-const BASE_ROW = 2;  // the resting line: sin(0) lands here, so it is seamless
 
-// A braille cell is 2 dot columns × 4 dot rows. Bit per (column, row):
-// left = dots 1,2,3,7 — right = dots 4,5,6,8.
-const BRAILLE = 0x2800;
-const LEFT = [0x01, 0x02, 0x04, 0x40];
-const RIGHT = [0x08, 0x10, 0x20, 0x80];
 
 // Endcaps, pointing inward: the bar is a segment, and a segment reads as one
 // thing when both ends are terminated. Big triangles fill the full cell height
@@ -339,44 +334,9 @@ export function tickMeter(ctx: any): void {
 	setMeter(Math.min(1, upRate / 300), Math.min(1, downRate / 300));
 }
 
-let busy = false;
-let phase = 0;
-let ticker: any = null;
 
-// Dot row 0..3 for one dot column. Outside the travelling packet the line is
-// flat; inside it, one full cycle: crest at a quarter, trough at three
-// quarters, and BASE_ROW at both ends so the packet joins the line without a
-// step.
-function dotRow(x: number, head: number): number {
-	const d = x - head;
-	if (d < 0 || d >= PACKET) return BASE_ROW;
-	const s = Math.sin((2 * Math.PI * d) / PACKET);
-	return Math.round(1.5 - 1.5 * s);
-}
 
-// The line between the caps. At rest it's a single centered dot (·) that
-// aligns with the triangles and reads as a light connecting segment — no
-// thick rule to leak into a text copy. During animation it switches to
-// braille, the only glyph family with sub-cell vertical resolution.
-function lineGlyphs(width: number): string {
-	if (!busy) return "\u00B7".repeat(width);
-	const span = width * 2;
-	// The packet enters from off-screen left and leaves off-screen right, then
-	// the line is flat for GAP before the next one. Phase is normalised here
-	// rather than in the ticker: an ever-growing argument to sin() eventually
-	// loses precision and the wave stutters.
-	const period = span + PACKET + GAP;
-	phase = ((phase % period) + period) % period;
-	const head = phase - PACKET;
-	let out = "";
-	for (let i = 0; i < width; i++) {
-		// Two samples per cell: the wave is smoother than the cell grid.
-		out += String.fromCharCode(BRAILLE | LEFT[dotRow(2 * i, head)] | RIGHT[dotRow(2 * i + 1, head)]);
-	}
-	return out;
-}
-
-function barGlyphs(width: number): string {
+export function barGlyphs(width: number): string {
 	if (width < 3) return lineGlyphs(width);
 	const upSeg = capSegment(upMeter, CAP);
 	const downSeg = capSegment(downMeter, CAP_R);
@@ -403,36 +363,7 @@ function safePaint(paint: (s: string) => string, bar: string): string | null {
 	return null;
 }
 
-// editor.ts publishes the live tui's repaint; without it there is no frame to
-// drive and the ticker would spin for nothing.
-function repaint(): void {
-	const r = (globalThis as any).__oilrigRequestRender;
-	if (typeof r === "function") { try { r(); } catch { /* best-effort */ } }
-}
 
-export function setBusy(next: boolean): void {
-	if (busy === next) return;
-	busy = next;
-	if (busy) {
-		phase = 0;
-		if (!ticker && typeof (globalThis as any).__oilrigRequestRender === "function") {
-			ticker = setInterval(() => { phase += STEP; repaint(); }, FRAME_MS);
-			// A ref'd interval is a reason for node to stay alive (perf1).
-			(ticker as any).unref?.();
-		}
-	} else if (ticker) {
-		clearInterval(ticker);
-		ticker = null;
-	}
-	repaint();
-}
-
-// Test seam: the ticker needs a live tui, the glyph maths does not.
-export function __barGlyphsForTest(width: number, working: boolean, at: number): string {
-	const wasBusy = busy, wasPhase = phase;
-	busy = working; phase = at;
-	try { return barGlyphs(width); } finally { busy = wasBusy; phase = wasPhase; }
-}
 
 // Context cell: a dynamic progress bar that grows to fill its column width
 // minus the usage text. Built from ctx.getContextUsage percent (one source of

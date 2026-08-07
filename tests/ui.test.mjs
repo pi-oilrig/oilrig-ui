@@ -228,63 +228,35 @@ check("the model label is a block in the stack, not its own widget",
 		footer.startsWith(" ") && !footer.startsWith("  "), JSON.stringify(footer.slice(0, 8)));
 }
 
-// ── mode bar: flat line + one travelling wave ──
+// ── mode bar: flat line with dynamic cap meter ──
 {
 	const chrome = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
-	const { __barGlyphsForTest: glyphs, setBusy, setMeter, tickMeter, __lastSample } = chrome;
-	const isBraille = (s) => [...s].every((c) => c.codePointAt(0) >= 0x2800 && c.codePointAt(0) <= 0x28ff);
+	const { barGlyphs, setMeter, tickMeter, __lastSample } = chrome;
 	const FLAT = "\u00B7"; // · — middle dot, dead center with ▶◀
-const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wave tests
 	const INNER = 78;
 	const line = (s) => s.slice(1, -1);
 
-	const idle = glyphs(80, false, 0);
-	check("idle bar has right-pointing cap on the left", idle[0] === "▶");
-	check("idle bar has left-pointing cap on the right", idle[79] === "◀");
-	check("the line between caps is a centered dot", line(idle) === FLAT.repeat(INNER));
-	check("idle line is middle dots, not braille", line(idle).split("").every(c => c === "·"));
-	check("the caps are one cell each, so the bar fits", idle.length === 80 && [...idle].length === 80);
-	check("a 2-cell bar drops the caps", glyphs(2, false, 0) === FLAT.repeat(2));
+	const bar = barGlyphs(80);
+	check("idle bar has right-pointing cap on the left", bar[0] === "▶");
+	check("idle bar has left-pointing cap on the right", bar[79] === "◀");
+	check("the line between caps is a centered dot", line(bar) === FLAT.repeat(INNER));
+	check("idle line is middle dots, not braille", line(bar).split("").every(c => c === "·"));
+	check("the caps are one cell each, so the bar fits", bar.length === 80 && [...bar].length === 80);
+	check("a 2-cell bar drops the caps", barGlyphs(2) === FLAT.repeat(2));
 
-	const f0 = glyphs(80, true, 40);
-	const f1 = glyphs(80, true, 46);
-	check("working bar keeps both caps", [f0, f1].every((f) => f[0] === "▶" && f[79] === "◀"));
-	check("inner segment is braille", isBraille(line(f0)) && isBraille(line(f1)));
-	check("the wave never changes the bar width", [f0, f1].every((f) => f.length === 80));
-	check("every frame is exactly one cell per column", [...f1].length === 80);
-
-	// exactly one wave: the cells that are not the flat line form a single run
-	const runs = (s) => s.split("").reduce((a, c) => {
-		if (c === FLAT_BRAILLE) a.open = false;
-		else if (!a.open) { a.open = true; a.n++; }
-		return a;
-	}, { n: 0, open: false }).n;
-	check("only one wave is on the line at a time", runs(line(f0)) === 1 && runs(line(f1)) === 1);
-	check("the rest of the line stays flat", line(f0).split(FLAT_BRAILLE).length - 1 > 60);
-	// a full cycle: it reaches the top row and the bottom row
-	check("the wave has a crest and a trough", /[⠉⠊⠔]/.test(line(f0)) && /[⣀⡠⢄]/.test(line(f0)));
-
-	// travelling left to right: +2 dot columns of phase == shifted one cell right
-	check("the wave travels left to right",
-		line(glyphs(80, true, 40)).slice(0, INNER - 1) === line(glyphs(80, true, 42)).slice(1));
-	// and the line is flat again between passes — period = 78*2 + 20 + 44 = 220
-	check("the line rests flat between waves", line(glyphs(80, true, 220)) === FLAT_BRAILLE.repeat(INNER));
-
-	// with no tui to repaint, setBusy must not spin a ticker
-	delete globalThis.__oilrigRequestRender;
-	setBusy(true);
-	check("no ticker without a live tui to repaint", true); // asserted by the suite exiting
-	setBusy(false);
+	// barGlyphs always returns dots — no wave, no braille
+	check("inner segment is always middle dots", line(bar).split("").every(c => c === "·"));
+	check("bar width is constant", bar.length === 80);
 
 	// ── dynamic cap meter ──
 	{
-		const high = glyphs(80, false, 0);
+		const high = barGlyphs(80);
 		setMeter(0.5, 0);
-		const midUp = glyphs(80, false, 0);
+		const midUp = barGlyphs(80);
 		setMeter(0, 1);
-		const maxDown = glyphs(80, false, 0);
+		const maxDown = barGlyphs(80);
 		setMeter(0, 0);
-		const restored = glyphs(80, false, 0);
+		const restored = barGlyphs(80);
 		setMeter(0, 0);
 		check("at meter=0 each cap is one triangle", high[0] === "▶" && high[79] === "◀");
 		check("meter adds repeated triangles", midUp[0] === "▶" && midUp[1] === "▶");
@@ -299,7 +271,7 @@ const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wav
 		const emptyCtx = { sessionManager: { getEntries: () => [] } };
 		tickMeter(emptyCtx);
 		check("tickMeter with no entries leaves 1 cap",
-			glyphs(80, false, 0)[0] === "▶" && glyphs(80, false, 0)[79] === "◀");
+			barGlyphs(80)[0] === "▶" && barGlyphs(80)[79] === "◀");
 		const entries = [
 			{ type: "message", message: { role: "assistant", usage: { input: 600, output: 150 } } },
 		];
@@ -307,7 +279,7 @@ const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wav
 		chrome.__lastSample.set({ input: 0, output: 0, ts: now - 2000 });
 		const firstCtx = { sessionManager: { getEntries: () => entries } };
 		tickMeter(firstCtx);
-		const bar1 = glyphs(80, false, 0);
+		const bar1 = barGlyphs(80);
 		// 600/2=300/s → saturates at 1.0 → 5 ▶ (1+4); 150/2=75/s → 0.25 → 2 ◀ (1+1)
 		check("tickMeter: high upstream adds extra left triangles", bar1[0] === "▶" && bar1[1] === "▶");
 		check("tickMeter: moderate downstream adds one extra right triangle", bar1[78] === "◀" && bar1[79] === "◀");
