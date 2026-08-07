@@ -231,7 +231,7 @@ check("the model label is a block in the stack, not its own widget",
 // ── mode bar: flat line + one travelling wave ──
 {
 	const chrome = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
-	const { __barGlyphsForTest: glyphs, setBusy, setMeter } = chrome;
+	const { __barGlyphsForTest: glyphs, setBusy, setMeter, tickMeter, __lastSample } = chrome;
 	const isBraille = (s) => [...s].every((c) => c.codePointAt(0) >= 0x2800 && c.codePointAt(0) <= 0x28ff);
 	const FLAT = "\u2501"; // ━ — heavy horizontal, dead center with ▶◀
 const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wave tests
@@ -291,6 +291,28 @@ const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wav
 		check("right cap grows left, inner line shrinks", maxDown[78] === "◀" && maxDown[77] === "◀");
 		check("bar total width stays constant", [high, midUp, maxDown, restored].every(b => b.length === 80));
 		check("resetting meter restores single caps", restored[0] === "▶" && restored[79] === "◀");
+	}
+
+	// ── meter tick: computes rate from session entries ──
+	{
+		const now = Date.now();
+		const emptyCtx = { sessionManager: { getEntries: () => [] } };
+		tickMeter(emptyCtx);
+		check("tickMeter with no entries leaves 1 cap",
+			glyphs(80, false, 0)[0] === "▶" && glyphs(80, false, 0)[79] === "◀");
+		const entries = [
+			{ type: "message", message: { role: "assistant", usage: { input: 600, output: 150 } } },
+		];
+		// Force elapsed > 800ms by writing a stale baseline into the module
+		chrome.__lastSample.set({ input: 0, output: 0, ts: now - 2000 });
+		const firstCtx = { sessionManager: { getEntries: () => entries } };
+		tickMeter(firstCtx);
+		const bar1 = glyphs(80, false, 0);
+		// 600/2=300/s → saturates at 1.0 → 5 ▶ (1+4); 150/2=75/s → 0.25 → 2 ◀ (1+1)
+		check("tickMeter: high upstream adds extra left triangles", bar1[0] === "▶" && bar1[1] === "▶");
+		check("tickMeter: moderate downstream adds one extra right triangle", bar1[78] === "◀" && bar1[79] === "◀");
+		setMeter(0, 0);
+		chrome.__lastSample.set({ input: 0, output: 0, ts: 0 });
 	}
 }
 

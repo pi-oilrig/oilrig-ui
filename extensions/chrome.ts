@@ -312,7 +312,31 @@ function capSegment(meter: number, ch: string): string {
 export function setMeter(up: number, down: number): void {
 	upMeter = up;
 	downMeter = down;
-	repaint();
+}
+
+// Token-rate sampling for the meter. Called from retroLines each render
+// cycle — computes input/output tokens/sec since the last sample and maps
+// to 0..1 via saturation thresholds.
+const METER_INTERVAL_MS = 800;
+let lastSample = { input: 0, output: 0, ts: 0 };
+export const __lastSample = { get: () => lastSample, set: (s: typeof lastSample) => { lastSample = s; } };
+
+export function tickMeter(ctx: any): void {
+	const entries = ctx?.sessionManager?.getEntries?.();
+	if (!entries) { setMeter(0, 0); return; }
+	const totals = computeUsageTotals(entries);
+	const now = Date.now();
+	const elapsed = now - lastSample.ts;
+	if (elapsed < METER_INTERVAL_MS) {
+		// Re-use last meter values to avoid flickering at display rate.
+		return;
+	}
+	const dt = elapsed / 1000;
+	const upRate = Math.max(0, (totals.input - lastSample.input)) / dt;
+	const downRate = Math.max(0, (totals.output - lastSample.output)) / dt;
+	lastSample = { input: totals.input, output: totals.output, ts: now };
+	// Saturation: 0→0, 300+ tokens/s → 1.0
+	setMeter(Math.min(1, upRate / 300), Math.min(1, downRate / 300));
 }
 
 let busy = false;
@@ -487,6 +511,7 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 	// No gutter on any line: the ▏ rail down the left of the status block was
 	// the last of the old box framing, and the mode bar above already marks
 	// where the footer starts.
+	tickMeter(ctx);
 	return [modeBar(width), ...out];
 }
 
