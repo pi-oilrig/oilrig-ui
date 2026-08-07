@@ -287,8 +287,8 @@ const RIGHT = [0x08, 0x10, 0x20, 0x80];
 // thing when both ends are terminated. Small triangles rather than ▶/◀ — those
 // two have an emoji presentation and render double-width in some fonts, which
 // would break the exact-width contract modeBar checks before painting.
-const CAP_L = "▶";
-const CAP_R = "◀";
+const CAP_L = "\u25C2"; // ◂ — small triangle at x-height, aligns with braille
+const CAP_R = "\u25B8"; // ▸
 
 let busy = false;
 let phase = 0;
@@ -331,15 +331,26 @@ function barGlyphs(width: number): string {
 }
 
 function modeBar(width: number): string {
-	const bar = barGlyphs(Math.max(0, width));
+	let bar = barGlyphs(Math.max(0, width));
+	// Apply bold to caps on the raw glyphs so character indexing is correct.
+	if (bar.length >= 3) {
+		bar = `\x1b[1m${bar[0]}\x1b[22m${bar.slice(1, -1)}\x1b[1m${bar.slice(-1)}\x1b[22m`;
+	}
 	const paint = (globalThis as any).__oilrigModePaint;
 	if (typeof paint === "function") {
-		try {
-			const painted = paint(bar);
-			if (typeof painted === "string" && vw(painted) === bar.length) return painted;
-		} catch { /* fall through to dim */ }
+		const painted = safePaint(paint, bar);
+		if (painted !== null) return painted;
 	}
+	// dim fallthrough when no mode paint function
 	return `${DIM}${bar}${RESET}`;
+}
+
+function safePaint(paint: (s: string) => string, bar: string): string | null {
+	try {
+		const p = paint(bar);
+		if (typeof p === "string" && vw(p) === vw(bar)) return p;
+	} catch { /* fall through */ }
+	return null;
 }
 
 // editor.ts publishes the live tui's repaint; without it there is no frame to
