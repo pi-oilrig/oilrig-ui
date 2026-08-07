@@ -260,17 +260,18 @@ function modelString(): string {
 // publishes that paint fn on every input render; before the first one, or
 // without the editor stack, it falls back to dim.
 //
-// While the agent is working the bar trickles: a wave travels left to right
-// along it, drawn in braille. Braille is the only glyph family with sub-cell
-// vertical resolution — four dot rows inside one cell — so the wave rises and
-// falls *within* the single row the bar already occupies. A block pulse could
-// only get taller, which reads as the bar growing a second line; this cannot.
-// It runs only between agent_start and agent_end, and only when something can
-// actually repaint the frame.
-const THICK = "▀"; // idle: upper half block
-const FRAME_MS = 60;
-const STEP = 1;        // dot columns advanced per frame
-const WAVELENGTH = 16; // dot columns per cycle — 8 cells
+// The bar is one flat braille line. While the agent is working a *single*
+// sine cycle travels along it left to right and the rest of the line stays
+// flat — one wave passing, not a rippling field. Braille is the only glyph
+// family with sub-cell vertical resolution (4 dot rows in one cell), so the
+// wave rises and falls inside the row the bar already occupies; it can never
+// spill onto a second line. It runs only between agent_start and agent_end,
+// and only when something can actually repaint the frame.
+const FRAME_MS = 45;
+const STEP = 3;      // dot columns advanced per frame
+const PACKET = 20;   // dot columns spanned by the one wave — 10 cells
+const GAP = 44;      // flat dot columns between passes
+const BASE_ROW = 2;  // the resting line: sin(0) lands here, so it is seamless
 
 // A braille cell is 2 dot columns × 4 dot rows. Bit per (column, row):
 // left = dots 1,2,3,7 — right = dots 4,5,6,8.
@@ -282,21 +283,31 @@ let busy = false;
 let phase = 0;
 let ticker: any = null;
 
-// Dot row 0..3 for one dot column of the travelling wave. Phase is taken
-// modulo the wavelength: it ticks forever, and an ever-growing argument to
-// sin() loses precision until the wave visibly stutters.
-function waveRow(x: number): number {
-	const p = ((phase % WAVELENGTH) + WAVELENGTH) % WAVELENGTH;
-	const s = Math.sin((2 * Math.PI * (x - p)) / WAVELENGTH);
-	return Math.round(((1 - s) / 2) * 3);
+// Dot row 0..3 for one dot column. Outside the travelling packet the line is
+// flat; inside it, one full cycle: crest at a quarter, trough at three
+// quarters, and BASE_ROW at both ends so the packet joins the line without a
+// step.
+function dotRow(x: number, head: number): number {
+	const d = x - head;
+	if (d < 0 || d >= PACKET) return BASE_ROW;
+	const s = Math.sin((2 * Math.PI * d) / PACKET);
+	return Math.round(1.5 - 1.5 * s);
 }
 
 function barGlyphs(width: number): string {
-	if (!busy) return THICK.repeat(width);
+	if (!busy) return String.fromCharCode(BRAILLE | LEFT[BASE_ROW] | RIGHT[BASE_ROW]).repeat(width);
+	const span = width * 2;
+	// The packet enters from off-screen left and leaves off-screen right, then
+	// the line is flat for GAP before the next one. Phase is normalised here
+	// rather than in the ticker: an ever-growing argument to sin() eventually
+	// loses precision and the wave stutters.
+	const period = span + PACKET + GAP;
+	phase = ((phase % period) + period) % period;
+	const head = phase - PACKET;
 	let out = "";
 	for (let i = 0; i < width; i++) {
 		// Two samples per cell: the wave is smoother than the cell grid.
-		out += String.fromCharCode(BRAILLE | LEFT[waveRow(2 * i)] | RIGHT[waveRow(2 * i + 1)]);
+		out += String.fromCharCode(BRAILLE | LEFT[dotRow(2 * i, head)] | RIGHT[dotRow(2 * i + 1, head)]);
 	}
 	return out;
 }
@@ -326,7 +337,7 @@ export function setBusy(next: boolean): void {
 	if (busy) {
 		phase = 0;
 		if (!ticker && typeof (globalThis as any).__oilrigRequestRender === "function") {
-			ticker = setInterval(() => { phase = (phase + STEP) % WAVELENGTH; repaint(); }, FRAME_MS);
+			ticker = setInterval(() => { phase += STEP; repaint(); }, FRAME_MS);
 			// A ref'd interval is a reason for node to stay alive (perf1).
 			(ticker as any).unref?.();
 		}
