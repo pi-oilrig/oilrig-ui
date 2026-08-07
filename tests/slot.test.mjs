@@ -1,5 +1,5 @@
 // slot.test — the ui slot client targets globalThis.__web (the per-cwd web
-// surface, pi-web). A slot that registers before __web is published queues
+// surface, oilrig-web). A slot that registers before __web is published queues
 // on globalThis.__webPending; once __web is up, registerSlot calls it
 // directly. Split out of ui.test.mjs per C3; re-pointed at __web by the A9
 // fold (billboard deleted, web replaces it).
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const SCRATCH = join(process.env.TMPDIR ?? "/tmp", `pi-ui-slot-${process.pid}`);
+const SCRATCH = join(process.env.TMPDIR ?? "/tmp", `oilrig-ui-slot-${process.pid}`);
 rmSync(SCRATCH, { recursive: true, force: true });
 mkdirSync(join(SCRATCH, "extensions"), { recursive: true });
 mkdirSync(join(SCRATCH, "node_modules/typebox"), { recursive: true });
@@ -42,7 +42,7 @@ for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) 
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(){} }; export const getSelectListTheme = () => ({}); export class DynamicBorder { constructor(){} render(){ return []; } } export const ExtensionAPI = {};`);
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "package.json"), JSON.stringify({ name: pkg, version: "0.0.0", main: "index.js", exports: { ".": "./index.js" } }));
 }
-writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-slot-test", type: "module", pi: {} }));
+writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "oilrig-ui-slot-test", type: "module", pi: {} }));
 process.env.HOME = SCRATCH;
 // slot.ts is the client under test; it targets __web, not the deleted billboard.
 writeFileSync(join(SCRATCH, "extensions", "slot.ts"), readFileSync(join(ROOT, "extensions", "slot.ts"), "utf8"));

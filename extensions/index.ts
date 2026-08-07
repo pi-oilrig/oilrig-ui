@@ -1,4 +1,4 @@
-// pi-ui — unified TUI extension.
+// oilrig-ui — unified TUI extension.
 //
 // Wires every UI module into one session_start hook, owns the editor slot,
 // the footer, and the style prompt. No external UI packages needed — this
@@ -20,7 +20,7 @@ export default function (pi: ExtensionAPI) {
 	// Editor stack — selection, history, :q, gantt board, left bar
 	installEditor(pi);
 
-	// The info surface is the per-cwd local website (pi-web), a separate
+	// The info surface is the per-cwd local website (oilrig-web), a separate
 	// package: extensions register HTML cards on globalThis.__web and a
 	// detached server serves them at 127.0.0.1. No in-pi widget or overlay.
 

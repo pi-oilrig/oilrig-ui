@@ -1,4 +1,4 @@
-# Runtime Error Report — pi-ui
+# Runtime Error Report — oilrig-ui
 
 ## Errors Found
 
@@ -73,7 +73,7 @@ singleton set by the interactive mode).
 ### 4. Missing error boundaries (MEDIUM — fixed)
 
 All event handlers, render wrappers, and callback listeners lacked try-catch.
-Any runtime error crashes pi entirely. Added `[pi-ui]`-prefixed console.error
+Any runtime error crashes pi entirely. Added `[oilrig-ui]`-prefixed console.error
 fallthroughs in:
 
 - `installStyle()` — all pi.on handlers

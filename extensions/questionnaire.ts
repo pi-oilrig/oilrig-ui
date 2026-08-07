@@ -1,6 +1,6 @@
 // Questionnaire — the agent asks, the user answers, in an overlay.
 //
-// Lives in pi-ui because it is an interactive surface over the editor slot,
+// Lives in oilrig-ui because it is an interactive surface over the editor slot,
 // the same reason the billboard panel lives here: one owner for chrome,
 // keybindings and the ui.custom overlay.
 //

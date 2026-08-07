@@ -283,7 +283,7 @@ function installSelection(editor: any): void {
 
 		return false;
 	} catch (err) {
-		console.error("[pi-ui] selection shortcut error:", (err as Error).message);
+		console.error("[oilrig-ui] selection shortcut error:", (err as Error).message);
 		return false;
 	}
 })(editor.onExtensionShortcut);
@@ -304,7 +304,7 @@ function installSelection(editor: any): void {
 				return overlay(line, range.from, range.len, width);
 			});
 		} catch (err) {
-			console.error("[pi-ui] selection render error:", (err as Error).message);
+			console.error("[oilrig-ui] selection render error:", (err as Error).message);
 			// Fallback: return the original render result without selection overlay
 			return [" ".repeat(width)];
 		}
@@ -520,7 +520,7 @@ function installHistory(editor: any): void {
 			}
 			return origShortcut.call(this, data);
 		} catch (err) {
-			console.error("[pi-ui] history shortcut error:", (err as Error).message);
+			console.error("[oilrig-ui] history shortcut error:", (err as Error).message);
 			return false;
 		}
 	};
@@ -603,7 +603,7 @@ function installLeftBar(editor: any, theme: any): void {
 			}
 			return out;
 		} catch (err) {
-			console.error("[pi-ui] leftBar render error:", (err as Error).message);
+			console.error("[oilrig-ui] leftBar render error:", (err as Error).message);
 			return origRender(width);
 		}
 	};
@@ -618,7 +618,7 @@ function installGanttBoard(editor: any): void {
 			const lines = origRender(width);
 			return lines;
 		} catch (err) {
-			console.error("[pi-ui] ganttBoard render error:", (err as Error).message);
+			console.error("[oilrig-ui] ganttBoard render error:", (err as Error).message);
 			return [" ".repeat(width)];
 		}
 	};
@@ -740,7 +740,7 @@ export function installEditor(pi: ExtensionAPI): void {
 			}, 10);
 			(poll as any).unref?.();
 		} catch (err) {
-			console.error("[pi-ui] editor session_start error:", (err as Error).message);
+			console.error("[oilrig-ui] editor session_start error:", (err as Error).message);
 		}
 	});
 
@@ -755,7 +755,7 @@ export function installEditor(pi: ExtensionAPI): void {
 				return { action: "handled" };
 			}
 		} catch (err) {
-			console.error("[pi-ui] editor input error:", (err as Error).message);
+			console.error("[oilrig-ui] editor input error:", (err as Error).message);
 		}
 		return { action: "continue" as const };
 	});

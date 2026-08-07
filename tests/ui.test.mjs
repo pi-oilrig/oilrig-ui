@@ -1,4 +1,4 @@
-// Regression suite for pi-ui — style, editor, chrome, starship.
+// Regression suite for oilrig-ui — style, editor, chrome, starship.
 //
 //   node --experimental-strip-types tests/ui.test.mjs
 //
@@ -16,7 +16,7 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 // Per-process scratch: a fixed path collides when two runs overlap (the probe
 // running every package's tests while a bare `npm test` is open), and the stale
 // pi-history.jsonl makes the picker assertions fail nondeterministically.
-const SCRATCH = join(process.env.TMPDIR ?? "/tmp", `pi-ui-test-${process.pid}`);
+const SCRATCH = join(process.env.TMPDIR ?? "/tmp", `oilrig-ui-test-${process.pid}`);
 
 rmSync(SCRATCH, { recursive: true, force: true });
 mkdirSync(join(SCRATCH, "extensions"), { recursive: true });
@@ -55,7 +55,7 @@ for (const pkg of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) 
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "index.js"), `export const CustomEditor = class CustomEditor { constructor(tui, theme, kb) { this.state = { lines: [""], cursorLine: 0, cursorCol: 0 }; this.tui = tui; this.theme = theme; this.keybindings = kb; } getText() { return this.state.lines.join("\\n"); } setText(t) { this.state.lines = t.split("\\n"); } moveCursor(dl, dc) { this.state.cursorLine = Math.max(0, Math.min(this.state.lines.length - 1, this.state.cursorLine + dl)); this.state.cursorCol = Math.max(0, this.state.cursorCol + dc); } moveToLineStart() { this.state.cursorCol = 0; } moveToLineEnd() { this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length; } pageScroll(dir) {} render(w) { return this.state.lines.map(l => l || " "); } segment(line, type) { return []; } setAutocompleteProvider(p) { this.autocompleteProvider = p; } getAutocompleteMaxVisible() { return this.maxVisible ?? 5; } setAutocompleteMaxVisible(n) { this.maxVisible = n; } cancelAutocomplete() { this.autocompleteState = null; } isShowingAutocomplete() { return !!this.autocompleteState; } async requestAutocomplete(o) { const r = await this.autocompleteProvider.getSuggestions(this.state.lines, this.state.cursorLine, this.state.cursorCol, { signal: {}, force: o.force }); if (!r || !r.items || r.items.length === 0) { this.cancelAutocomplete(); return; } this.autocompletePrefix = r.prefix; this.autocompleteItems = r.items; this.autocompleteState = o.force ? "force" : "regular"; } }; export const getSelectListTheme = () => ({ selectedPrefix: s => s, selectedText: s => s, description: s => s, scrollInfo: s => s, noMatch: s => s }); export class DynamicBorder { constructor(color){ this._color = color || (s => s); } render(w){ return [this._color("-".repeat(Math.max(1, w)))]; } } export const ExtensionAPI = {};`);
 	writeFileSync(join(SCRATCH, "node_modules", pkg, "package.json"), JSON.stringify({ name: pkg, version: "0.0.0", main: "index.js", exports: { ".": "./index.js" } }));
 }
-writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "pi-ui-test", type: "module", pi: {} }));
+writeFileSync(join(SCRATCH, "package.json"), JSON.stringify({ name: "oilrig-ui-test", type: "module", pi: {} }));
 
 // The history picker reads ~/.pi/agent/pi-history.jsonl at homedir(). Point HOME
 // at the scratch dir (before the extension is imported — HISTORY_DIR is computed
@@ -250,9 +250,9 @@ check("escape disarms history mode", baseProvider.calls === 1);
 
 // ── starship ──
 // starship registers a slot (priority 70) at extension load via
-// registerSlot — it targets globalThis.__web (the pi-web surface). ui no
+// registerSlot — it targets globalThis.__web (the oilrig-web surface). ui no
 // longer installs an info surface itself (the billboard was deleted in the
-// A9 fold), so the slot queues on globalThis.__webPending until pi-web loads.
+// A9 fold), so the slot queues on globalThis.__webPending until oilrig-web loads.
 const starSlot = (globalThis.__webPending ?? []).find((s) => s && s.id === "starship");
 check("starship slot registered", !!starSlot && typeof starSlot.row === "function" && starSlot.priority === 70);
 

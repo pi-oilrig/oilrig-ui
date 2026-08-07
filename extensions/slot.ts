@@ -1,4 +1,4 @@
-// slot.ts — the client side of the web surface registry, for pi-ui's own modules.
+// slot.ts — the client side of the web surface registry, for oilrig-ui's own modules.
 //
 // Extension load order is not fixed, so a module may register before the
 // web surface's install has published globalThis.__web. Registrations made

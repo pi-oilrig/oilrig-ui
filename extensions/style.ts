@@ -84,7 +84,7 @@ export function installStyle(pi: ExtensionAPI): void {
 				active = false;
 			}
 		} catch (err) {
-			console.error("[pi-ui] style input error:", (err as Error).message);
+			console.error("[oilrig-ui] style input error:", (err as Error).message);
 		}
 	});
 
@@ -104,7 +104,7 @@ export function installStyle(pi: ExtensionAPI): void {
 			doctrineSent = true;
 			return { systemPrompt: `${event.systemPrompt}\n\n${SYSTEM_PROMPT}` };
 		} catch (err) {
-			console.error("[pi-ui] style before_agent_start error:", (err as Error).message);
+			console.error("[oilrig-ui] style before_agent_start error:", (err as Error).message);
 		}
 	});
 
@@ -117,7 +117,7 @@ export function installStyle(pi: ExtensionAPI): void {
 			if (!input || typeof input !== "object") return;
 			injectSubagentTasks(input);
 		} catch (err) {
-			console.error("[pi-ui] style tool_call error:", (err as Error).message);
+			console.error("[oilrig-ui] style tool_call error:", (err as Error).message);
 		}
 	});
 
@@ -139,7 +139,7 @@ export function installStyle(pi: ExtensionAPI): void {
 			next[lastUserIdx] = setUserText(msg, reminded);
 			return { messages: next };
 		} catch (err) {
-			console.error("[pi-ui] style context error:", (err as Error).message);
+			console.error("[oilrig-ui] style context error:", (err as Error).message);
 		}
 	});
 }

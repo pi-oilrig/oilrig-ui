@@ -377,6 +377,6 @@ export function installChrome(pi: any, ctx: any): void {
 		trackStatus(pi, ctx);
 		installFooter(ctx);
 	} catch (err) {
-		console.error("[pi-ui] chrome install error:", (err as Error).message);
+		console.error("[oilrig-ui] chrome install error:", (err as Error).message);
 	}
 }
