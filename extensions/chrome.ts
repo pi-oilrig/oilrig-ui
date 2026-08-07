@@ -189,6 +189,10 @@ function trackStatus(pi: any, ctx: any): void {
 		statusTracked = true;
 		pi.on("model_select", (e: any) => { liveModel = e?.model ?? liveModel; renderModelWidget(); });
 		pi.on("thinking_level_select", (e: any) => { liveThinking = e?.level ?? liveThinking; renderModelWidget(); });
+		// The working window: the mode bar pulses between these two.
+		pi.on("agent_start", () => setBusy(true));
+		pi.on("agent_end", () => setBusy(false));
+		pi.on("session_shutdown", () => setBusy(false));
 	}
 }
 
@@ -255,9 +259,44 @@ function modelString(): string {
 // which is what pi recolours per mode (bash, thinking accents). editor.ts
 // publishes that paint fn on every input render; before the first one, or
 // without the editor stack, it falls back to dim.
-const THICK = "▀";
+//
+// While the agent is working the bar animates: a pulse of full blocks travels
+// left to right along it, wrapping. One glyph swap, no colour change — the
+// bar's identity (mode colour, full width, thick) is the same whether it is
+// moving or still, so the animation reads as *this bar, alive* rather than as
+// a second widget appearing. It runs only between agent_start and agent_end,
+// and only when something can actually repaint the frame.
+const THICK = "▀"; // idle: upper half block
+const PULSE = "█"; // working: full block, the travelling head
+const FRAME_MS = 60;
+const STEP = 2;   // cells advanced per frame
+const GAP = 14;   // dead cells between the tail and the next head
+
+let busy = false;
+let phase = 0;
+let ticker: any = null;
+
+// Head length scales with the terminal so the pulse reads the same at 80 and
+// at 200 columns.
+function pulseLen(width: number): number {
+	return Math.max(3, Math.round(width / 20));
+}
+
+function barGlyphs(width: number): string {
+	if (!busy) return THICK.repeat(width);
+	const head = pulseLen(width);
+	const period = width + head + GAP;
+	const pos = ((phase % period) + period) % period;
+	let out = "";
+	for (let i = 0; i < width; i++) {
+		const d = pos - i; // cells behind the head
+		out += d >= 0 && d < head ? PULSE : THICK;
+	}
+	return out;
+}
+
 function modeBar(width: number): string {
-	const bar = THICK.repeat(Math.max(0, width));
+	const bar = barGlyphs(Math.max(0, width));
 	const paint = (globalThis as any).__oilrigModePaint;
 	if (typeof paint === "function") {
 		try {
@@ -266,6 +305,37 @@ function modeBar(width: number): string {
 		} catch { /* fall through to dim */ }
 	}
 	return `${DIM}${bar}${RESET}`;
+}
+
+// editor.ts publishes the live tui's repaint; without it there is no frame to
+// drive and the ticker would spin for nothing.
+function repaint(): void {
+	const r = (globalThis as any).__oilrigRequestRender;
+	if (typeof r === "function") { try { r(); } catch { /* best-effort */ } }
+}
+
+export function setBusy(next: boolean): void {
+	if (busy === next) return;
+	busy = next;
+	if (busy) {
+		phase = 0;
+		if (!ticker && typeof (globalThis as any).__oilrigRequestRender === "function") {
+			ticker = setInterval(() => { phase += STEP; repaint(); }, FRAME_MS);
+			// A ref'd interval is a reason for node to stay alive (perf1).
+			(ticker as any).unref?.();
+		}
+	} else if (ticker) {
+		clearInterval(ticker);
+		ticker = null;
+	}
+	repaint();
+}
+
+// Test seam: the ticker needs a live tui, the glyph maths does not.
+export function __barGlyphsForTest(width: number, working: boolean, at: number): string {
+	const wasBusy = busy, wasPhase = phase;
+	busy = working; phase = at;
+	try { return barGlyphs(width); } finally { busy = wasBusy; phase = wasPhase; }
 }
 
 // Context cell: a dynamic progress bar that grows to fill its column width
@@ -292,7 +362,7 @@ function contextUnit(_statuses: Map<string, string> | undefined, ctx: any, cellW
 
 function retroLines(width: number, ctx: any, footerData: any): string[] {
 	const out: string[] = [];
-	const cw = Math.max(1, width - 1); // reserve 1 for the ▏ gutter
+	const cw = Math.max(1, width);
 	provCount = footerData?.getAvailableProviderCount?.() ?? provCount;
 	try {
 		const sm = ctx?.sessionManager;
@@ -341,9 +411,10 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 			}
 		}
 	} catch { /* best-effort */ }
-	// The mode bar replaces the old thin rule and spans the full width, so it
-	// takes no ▏ gutter — every other line does.
-	return [modeBar(width), ...out.map((l) => `▏${l}`)];
+	// No gutter on any line: the ▏ rail down the left of the status block was
+	// the last of the old box framing, and the mode bar above already marks
+	// where the footer starts.
+	return [modeBar(width), ...out];
 }
 
 // chrome owns the *renderer*; hub owns the *installation* (hub's session_start

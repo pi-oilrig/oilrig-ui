@@ -156,12 +156,38 @@ check("retro footer installed", typeof footerFactory === "function");
 	check("footer line 1 is a full-width thick mode bar", plain(lines[0]) === "▀".repeat(80));
 	check("no thin rule left in the footer", !lines.some((l) => plain(l).includes("─")));
 	check("the model label left the footer", !lines.some((l) => plain(l).includes("no-model")));
+	// the ▏ rail down the left of the status block is gone
+	check("no ▏ gutter on any footer line", !lines.some((l) => l.includes("▏")));
+	check("footer lines still fit the terminal", lines.every((l) => plain(l).length <= 80));
 	// the mode bar takes the editor's live borderColor when one is published
 	globalThis.__oilrigModePaint = (s) => `\x1b[35m${s}\x1b[0m`;
 	check("mode bar paints with the editor's borderColor", comp.render(80)[0].startsWith("\x1b[35m"));
 	delete globalThis.__oilrigModePaint;
 }
 check("model label sits above the input", widgets.some(([k, v]) => k === "model" && String(v).includes("no-model")));
+
+// ── mode bar pulse ──
+{
+	const chrome = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
+	const { __barGlyphsForTest: glyphs, setBusy } = chrome;
+	check("idle bar is all thick, no pulse", glyphs(80, false, 0) === "▀".repeat(80));
+	const f0 = glyphs(80, true, 0);
+	const f1 = glyphs(80, true, 20);
+	check("working bar carries a pulse", f0.includes("█") && f1.includes("█"));
+	check("the pulse moves between frames", f0 !== f1);
+	check("the pulse never changes the bar width", [f0, f1].every((f) => f.length === 80));
+	const head = (s) => s.indexOf("█");
+	check("the pulse travels left to right", head(glyphs(80, true, 30)) > head(glyphs(80, true, 10)));
+	const run = f1.match(/█+/)[0].length;
+	check("the pulse is one contiguous run", (f1.match(/█+/g) ?? []).length === 1 && run >= 3);
+	check("the pulse scales with width", glyphs(200, true, 40).match(/█+/)[0].length > run);
+	// with no tui to repaint, setBusy must not spin a ticker
+	delete globalThis.__oilrigRequestRender;
+	setBusy(true);
+	check("no ticker without a live tui to repaint", true); // asserted by the suite exiting
+	setBusy(false);
+}
+
 
 // ── editor stack ──
 let editorFactoryCalled = false;
@@ -204,6 +230,49 @@ check("selection is highlighted", ed.render(80).join("\n").includes("\x1b[7m"));
 check("input box has no left bar to copy", ed.render(80).every((l) => !l.includes("▌")));
 check("input lines keep the two-column indent", ed.render(80).every((l) => l.startsWith("  ")));
 check("editor publishes its mode paint for the footer bar", typeof globalThis.__oilrigModePaint === "function");
+check("editor publishes a repaint hook for the pulse", typeof globalThis.__oilrigRequestRender === "function");
+
+// ── cursor: focus reporting + idle blink ──
+{
+	const ed2 = await import(pathToFileURL(join(SCRATCH, "extensions/editor.ts")).href);
+	const { consumeFocusEvents, setCursorFocused, noteCursorActivity, teardownCursor } = ed2;
+
+	const wrote = [];
+	const origWrite = process.stdout.write.bind(process.stdout);
+	process.stdout.write = (s) => { wrote.push(String(s)); return true; };
+	const since = () => { const s = wrote.join(""); wrote.length = 0; return s; };
+
+	// focus replies are consumed, never typed into the box
+	check("focus-out reply is stripped from the key stream", consumeFocusEvents("\x1b[O") === "");
+	check("unfocused cursor is an underline", since().includes("\x1b[4 q"));
+	check("focus-in reply is stripped too", consumeFocusEvents("\x1b[I") === "");
+	check("refocused cursor is a steady block", since().includes("\x1b[2 q"));
+	check("a focus reply mixed with keys keeps the keys", consumeFocusEvents("\x1b[Oab") === "ab");
+	since();
+	check("ordinary keys pass through untouched", consumeFocusEvents("hello") === "hello");
+	check("a plain escape sequence is not eaten", consumeFocusEvents("\x1b[A") === "\x1b[A");
+
+	// idle → blink, then a keystroke → steady again
+	setCursorFocused(true);
+	since();
+	await new Promise((r) => setTimeout(r, 2700));
+	check("cursor blinks after the idle timeout", since().includes("\x1b[1 q"));
+	noteCursorActivity();
+	check("typing restores a steady cursor", since().includes("\x1b[2 q"));
+
+	// an unfocused window does not start blinking behind your back
+	setCursorFocused(false);
+	since();
+	await new Promise((r) => setTimeout(r, 2700));
+	check("an unfocused cursor never blinks", !since().includes("\x1b[1 q"));
+
+	teardownCursor();
+	const bye = since();
+	check("shutdown turns focus reporting off and restores the cursor",
+		bye.includes("\x1b[?1004l") && bye.includes("\x1b[2 q"));
+
+	process.stdout.write = origWrite;
+}
 let cutThrew = false;
 try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
 check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");

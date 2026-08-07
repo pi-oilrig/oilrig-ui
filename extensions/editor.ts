@@ -590,6 +590,120 @@ function stripRails(line: string): string | null {
 	return inner;
 }
 
+// ── cursor ───────────────────────────────────────────────────────────
+//
+// pi draws the *hardware* cursor: the editor emits CURSOR_MARKER, pi-tui finds
+// it, strips it and positions the real terminal cursor there
+// (`positionHardwareCursor`). So the cursor's shape is the terminal's, and
+// DECSCUSR (`ESC [ <n> SP q`) is the way to change it — nothing is painted
+// into the text, which is the whole point after the ▌ bar left the input box.
+//
+// Three states:
+//   unfocused        → underline. DECSCUSR has block, underline and bar and no
+//                      hollow block, so a true outline is not expressible;
+//                      underline is the conventional "not here" cursor, and a
+//                      terminal that hollows an unfocused cursor by itself
+//                      still does that on top.
+//   focused, typing  → steady block.
+//   focused, idle    → blinking block after IDLE_BLINK_MS.
+//
+// pi-tui never enables focus reporting, so this turns on DECSET 1004 and
+// consumes the `ESC [ I` / `ESC [ O` replies in handleInput before the editor
+// can read them as keys — unconsumed, they would type `[I` into the box.
+const CURSOR_BLINK_BLOCK = "\x1b[1 q";
+const CURSOR_STEADY_BLOCK = "\x1b[2 q";
+const CURSOR_STEADY_UNDERLINE = "\x1b[4 q";
+const FOCUS_REPORTING_ON = "\x1b[?1004h";
+const FOCUS_REPORTING_OFF = "\x1b[?1004l";
+const FOCUS_EVENT_RE = /\x1b\[[IO]/g;
+const IDLE_BLINK_MS = 2500;
+
+type CursorShape = "block" | "blink" | "underline";
+let cursorShape: CursorShape | null = null;
+let cursorFocused = true;
+let idleTimer: any = null;
+
+function writeCursor(shape: CursorShape): void {
+	if (cursorShape === shape) return;
+	cursorShape = shape;
+	const seq =
+		shape === "underline"
+			? CURSOR_STEADY_UNDERLINE
+			: shape === "blink"
+				? CURSOR_BLINK_BLOCK
+				: CURSOR_STEADY_BLOCK;
+	try { process.stdout.write(seq); } catch { /* best-effort */ }
+}
+
+function armIdleBlink(): void {
+	if (idleTimer) clearTimeout(idleTimer);
+	idleTimer = setTimeout(() => { if (cursorFocused) writeCursor("blink"); }, IDLE_BLINK_MS);
+	// Never a reason to keep the process alive.
+	(idleTimer as any).unref?.();
+}
+
+export function noteCursorActivity(): void {
+	if (!cursorFocused) return;
+	writeCursor("block");
+	armIdleBlink();
+}
+
+export function setCursorFocused(focused: boolean): void {
+	cursorFocused = focused;
+	if (focused) {
+		writeCursor("block");
+		armIdleBlink();
+	} else {
+		if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+		writeCursor("underline");
+	}
+}
+
+// Strip the focus replies out of an input chunk, applying each in order.
+// Returns what is left for the editor to treat as keys.
+export function consumeFocusEvents(data: string): string {
+	if (!data.includes("\x1b[")) return data;
+	let sawEvent = false;
+	const rest = data.replace(FOCUS_EVENT_RE, (m) => {
+		sawEvent = true;
+		setCursorFocused(m === "\x1b[I");
+		return "";
+	});
+	return sawEvent ? rest : data;
+}
+
+function installCursor(editor: any): void {
+	if ((globalThis as any).__oilrigCursorInstalled) return;
+	(globalThis as any).__oilrigCursorInstalled = true;
+	try { process.stdout.write(FOCUS_REPORTING_ON); } catch { /* best-effort */ }
+	setCursorFocused(true);
+
+	const orig = editor.handleInput?.bind(editor);
+	if (typeof orig !== "function") return;
+	editor.handleInput = function (this: any, data: string) {
+		try {
+			const rest = consumeFocusEvents(data);
+			if (rest !== data) {
+				this.tui?.requestRender?.();
+				if (!rest) return; // the chunk was nothing but focus replies
+				noteCursorActivity();
+				return orig.call(this, rest);
+			}
+			noteCursorActivity();
+		} catch { /* never block a keystroke */ }
+		return orig.call(this, data);
+	};
+}
+
+export function teardownCursor(): void {
+	if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+	try {
+		process.stdout.write(FOCUS_REPORTING_OFF + CURSOR_STEADY_BLOCK);
+	} catch { /* best-effort */ }
+	cursorShape = null;
+	(globalThis as any).__oilrigCursorInstalled = false;
+}
+
 function installUnframe(editor: any, theme: any): void {
 	const origRender = editor.render.bind(editor);
 	const fallback = (s: string) =>
@@ -607,6 +721,10 @@ function installUnframe(editor: any, theme: any): void {
 						? editor.theme.borderColor
 						: fallback;
 			(globalThis as any).__oilrigModePaint = paint;
+			// chrome's mode-bar pulse needs a frame to drive; this is the only
+			// place holding the live tui.
+			if (editor.tui?.requestRender)
+				(globalThis as any).__oilrigRequestRender = () => editor.tui.requestRender();
 			const prefix = INDENT;
 			const lines = origRender(Math.max(1, width - 2));
 			const out: string[] = [];
@@ -684,6 +802,7 @@ class InputStack {
 				installHistory(ed);
 				installUnframe(ed, theme);
 				installGanttBoard(ed);
+				installCursor(ed);
 				(ed as any).__ctx = ctx;
 				return ed;
 			});
@@ -723,6 +842,7 @@ class InputStack {
 			installHistory(live);
 			installUnframe(live, theme);
 			installGanttBoard(live);
+			installCursor(live);
 			this.layers = probes.map((p, i) =>
 				p ? `${p.constructor?.name ?? "?"}${i === liveIdx ? " (live)" : ""}` : "failed");
 			live.__editorStack = { layers: this.layers, stacked: this.stacked, notes: this.notes };
@@ -777,6 +897,10 @@ export function installEditor(pi: ExtensionAPI): void {
 			console.error("[oilrig-ui] editor input error:", (err as Error).message);
 		}
 		return { action: "continue" as const };
+	});
+
+	pi.on("session_shutdown", () => {
+		try { teardownCursor(); } catch { /* best-effort */ }
 	});
 
 	pi.registerCommand("input", {
