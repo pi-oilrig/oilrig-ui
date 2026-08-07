@@ -166,21 +166,26 @@ check("retro footer installed", typeof footerFactory === "function");
 }
 check("model label sits above the input", widgets.some(([k, v]) => k === "model" && String(v).includes("no-model")));
 
-// ── mode bar pulse ──
+// ── mode bar trickle ──
 {
 	const chrome = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
 	const { __barGlyphsForTest: glyphs, setBusy } = chrome;
-	check("idle bar is all thick, no pulse", glyphs(80, false, 0) === "▀".repeat(80));
+	const isBraille = (s) => [...s].every((c) => c.codePointAt(0) >= 0x2800 && c.codePointAt(0) <= 0x28ff);
+	check("idle bar is all thick, no animation", glyphs(80, false, 0) === "▀".repeat(80));
 	const f0 = glyphs(80, true, 0);
-	const f1 = glyphs(80, true, 20);
-	check("working bar carries a pulse", f0.includes("█") && f1.includes("█"));
-	check("the pulse moves between frames", f0 !== f1);
-	check("the pulse never changes the bar width", [f0, f1].every((f) => f.length === 80));
-	const head = (s) => s.indexOf("█");
-	check("the pulse travels left to right", head(glyphs(80, true, 30)) > head(glyphs(80, true, 10)));
-	const run = f1.match(/█+/)[0].length;
-	check("the pulse is one contiguous run", (f1.match(/█+/g) ?? []).length === 1 && run >= 3);
-	check("the pulse scales with width", glyphs(200, true, 40).match(/█+/)[0].length > run);
+	const f1 = glyphs(80, true, 5);
+	check("working bar is drawn entirely in braille", isBraille(f0) && isBraille(f1));
+	check("no block glyph survives in the trickle", !f0.includes("█") && !f0.includes("▀"));
+	check("the wave moves between frames", f0 !== f1);
+	check("the trickle never changes the bar width", [f0, f1].every((f) => f.length === 80));
+	// braille is one cell wide and one row tall whatever dots are lit — the
+	// animation cannot spill onto a second line
+	check("every frame is exactly one cell per column", [...f1].length === 80);
+	// a wave, not a blob: dots sit at more than one height across the bar
+	check("the trickle varies in height", new Set([...f0]).size > 2);
+	// travelling left to right: +2 dot columns of phase == shifted one cell right
+	check("the wave travels left to right", glyphs(80, true, 0).slice(0, 79) === glyphs(80, true, 2).slice(1));
+	check("the wave is periodic in one wavelength", glyphs(80, true, 0) === glyphs(80, true, 16));
 	// with no tui to repaint, setBusy must not spin a ticker
 	delete globalThis.__oilrigRequestRender;
 	setBusy(true);

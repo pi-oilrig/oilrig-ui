@@ -260,37 +260,43 @@ function modelString(): string {
 // publishes that paint fn on every input render; before the first one, or
 // without the editor stack, it falls back to dim.
 //
-// While the agent is working the bar animates: a pulse of full blocks travels
-// left to right along it, wrapping. One glyph swap, no colour change — the
-// bar's identity (mode colour, full width, thick) is the same whether it is
-// moving or still, so the animation reads as *this bar, alive* rather than as
-// a second widget appearing. It runs only between agent_start and agent_end,
-// and only when something can actually repaint the frame.
+// While the agent is working the bar trickles: a wave travels left to right
+// along it, drawn in braille. Braille is the only glyph family with sub-cell
+// vertical resolution — four dot rows inside one cell — so the wave rises and
+// falls *within* the single row the bar already occupies. A block pulse could
+// only get taller, which reads as the bar growing a second line; this cannot.
+// It runs only between agent_start and agent_end, and only when something can
+// actually repaint the frame.
 const THICK = "▀"; // idle: upper half block
-const PULSE = "█"; // working: full block, the travelling head
 const FRAME_MS = 60;
-const STEP = 2;   // cells advanced per frame
-const GAP = 14;   // dead cells between the tail and the next head
+const STEP = 1;        // dot columns advanced per frame
+const WAVELENGTH = 16; // dot columns per cycle — 8 cells
+
+// A braille cell is 2 dot columns × 4 dot rows. Bit per (column, row):
+// left = dots 1,2,3,7 — right = dots 4,5,6,8.
+const BRAILLE = 0x2800;
+const LEFT = [0x01, 0x02, 0x04, 0x40];
+const RIGHT = [0x08, 0x10, 0x20, 0x80];
 
 let busy = false;
 let phase = 0;
 let ticker: any = null;
 
-// Head length scales with the terminal so the pulse reads the same at 80 and
-// at 200 columns.
-function pulseLen(width: number): number {
-	return Math.max(3, Math.round(width / 20));
+// Dot row 0..3 for one dot column of the travelling wave. Phase is taken
+// modulo the wavelength: it ticks forever, and an ever-growing argument to
+// sin() loses precision until the wave visibly stutters.
+function waveRow(x: number): number {
+	const p = ((phase % WAVELENGTH) + WAVELENGTH) % WAVELENGTH;
+	const s = Math.sin((2 * Math.PI * (x - p)) / WAVELENGTH);
+	return Math.round(((1 - s) / 2) * 3);
 }
 
 function barGlyphs(width: number): string {
 	if (!busy) return THICK.repeat(width);
-	const head = pulseLen(width);
-	const period = width + head + GAP;
-	const pos = ((phase % period) + period) % period;
 	let out = "";
 	for (let i = 0; i < width; i++) {
-		const d = pos - i; // cells behind the head
-		out += d >= 0 && d < head ? PULSE : THICK;
+		// Two samples per cell: the wave is smoother than the cell grid.
+		out += String.fromCharCode(BRAILLE | LEFT[waveRow(2 * i)] | RIGHT[waveRow(2 * i + 1)]);
 	}
 	return out;
 }
@@ -320,7 +326,7 @@ export function setBusy(next: boolean): void {
 	if (busy) {
 		phase = 0;
 		if (!ticker && typeof (globalThis as any).__oilrigRequestRender === "function") {
-			ticker = setInterval(() => { phase += STEP; repaint(); }, FRAME_MS);
+			ticker = setInterval(() => { phase = (phase + STEP) % WAVELENGTH; repaint(); }, FRAME_MS);
 			// A ref'd interval is a reason for node to stay alive (perf1).
 			(ticker as any).unref?.();
 		}
