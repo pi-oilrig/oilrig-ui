@@ -1,6 +1,6 @@
 {
   "name": "oilrig-ui",
-  "version": "0.3.55",
+  "version": "0.3.56",
   "private": true,
   "description": "pi extension: unified TUI — editor stack (selection, history, :q), style prompt, chrome wraps (no-header, status footer), starship widget. Replaces pi-open-tui, pi-atuin, supi-prompt-suggestions, pi-chrome, pi-starship.",
   "keywords": [

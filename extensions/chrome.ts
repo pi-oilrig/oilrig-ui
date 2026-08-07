@@ -287,8 +287,8 @@ const RIGHT = [0x08, 0x10, 0x20, 0x80];
 // thing when both ends are terminated. Small triangles rather than ▶/◀ — those
 // two have an emoji presentation and render double-width in some fonts, which
 // would break the exact-width contract modeBar checks before painting.
-const CAP_L = "▸";
-const CAP_R = "◂";
+const CAP_L = "▶";
+const CAP_R = "◀";
 
 let busy = false;
 let phase = 0;
