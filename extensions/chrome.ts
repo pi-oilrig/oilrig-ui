@@ -3,16 +3,18 @@
 // Two jobs:
 //   1. no-header: suppress open-tui's welcome header via setHeader wrap.
 //   2. status-line: wrap setFooter to render a clean left/right pair layout
-//      per line, ordered by importance. Line 1: CWD + context bar. Line 2:
-//      pi's stats (tokens+cost left, model right). Lines 3+: extension pairs.
-//      No box borders, no side rails, no greedy packing.
+//      per line, ordered by importance. Line 1: the mode bar (a full-width
+//      thick rule painted in the editor's live borderColor). Line 2: CWD +
+//      context bar. Lines 3+: extension pairs. No box borders, no side rails,
+//      no greedy packing.
+//   3. model widget: the model/thinking label above the input box.
 
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AMBER, CYAN, DIM, GREEN, MAGENTA, RED, RESET, H, vw, FOLDER } from "./retro.ts";
+import { AMBER, CYAN, DIM, GREEN, MAGENTA, RED, RESET, vw, FOLDER } from "./retro.ts";
 
 // Retro palette: amber primary, green for active, dim for metadata
 const PALETTE = [CYAN, GREEN, AMBER, MAGENTA, RED];
@@ -172,7 +174,12 @@ export function renderPair(left: string, right: string, width: number): string {
 let liveModel: any = undefined;
 let liveThinking: string = "off";
 let statusTracked = false;
+let liveCtx: any = null;
+// getAvailableProviderCount only reaches us through footerData; cache what the
+// last footer render saw so the model widget can read it too.
+let provCount = 1;
 function trackStatus(pi: any, ctx: any): void {
+	liveCtx = ctx ?? liveCtx;
 	liveModel = ctx?.model ?? liveModel;
 	// ctx.thinkingLevel is the session's initial level (settings defaultThinkingLevel,
 	// e.g. "high"). Seed from it so the footer doesn't show "off" until the first
@@ -180,9 +187,26 @@ function trackStatus(pi: any, ctx: any): void {
 	if (ctx?.thinkingLevel) liveThinking = ctx.thinkingLevel;
 	if (!statusTracked && pi) {
 		statusTracked = true;
-		pi.on("model_select", (e: any) => { liveModel = e?.model ?? liveModel; });
-		pi.on("thinking_level_select", (e: any) => { liveThinking = e?.level ?? liveThinking; });
+		pi.on("model_select", (e: any) => { liveModel = e?.model ?? liveModel; renderModelWidget(); });
+		pi.on("thinking_level_select", (e: any) => { liveThinking = e?.level ?? liveThinking; renderModelWidget(); });
 	}
+}
+
+// ── model widget ──────────────────────────────────────────────────────────
+// The model label used to ride on the footer's rule line. It sits above the
+// input box now (setWidget's default placement is aboveEditor), where the
+// footer's first line is the mode bar instead.
+const MODEL_WIDGET = "model";
+
+function renderModelWidget(): void {
+	const ui = liveCtx?.ui;
+	if (!ui?.setWidget) return;
+	try {
+		const s = modelString();
+		// Two-column indent matches the editor's own, so the label lines up
+		// with the prompt text under it.
+		ui.setWidget(MODEL_WIDGET, s ? [`  ${DIM}${s}${RESET}`] : undefined);
+	} catch { /* best-effort */ }
 }
 
 function formatTokens(count: number): string {
@@ -219,13 +243,29 @@ function computeUsageTotals(entries: any[]): { input: number; output: number; ca
 
 const THINK = "\uE28C"; //  nf-fae-brain (thinking effort)
 
-function modelString(footerData: any): string {
+function modelString(): string {
 	const model = liveModel;
 	let s = model?.id || "no-model";
 	if (model?.reasoning) s = `${s} │ ${THINK} ${liveThinking}`;
-	const provCount = footerData?.getAvailableProviderCount?.() ?? 1;
 	if (provCount > 1 && model) s = `(${model.provider}) ${s}`;
 	return s;
+}
+
+// The mode bar: one full-width thick rule in the live editor's borderColor,
+// which is what pi recolours per mode (bash, thinking accents). editor.ts
+// publishes that paint fn on every input render; before the first one, or
+// without the editor stack, it falls back to dim.
+const THICK = "▀";
+function modeBar(width: number): string {
+	const bar = THICK.repeat(Math.max(0, width));
+	const paint = (globalThis as any).__oilrigModePaint;
+	if (typeof paint === "function") {
+		try {
+			const painted = paint(bar);
+			if (typeof painted === "string" && vw(painted) === bar.length) return painted;
+		} catch { /* fall through to dim */ }
+	}
+	return `${DIM}${bar}${RESET}`;
 }
 
 // Context cell: a dynamic progress bar that grows to fill its column width
@@ -252,17 +292,8 @@ function contextUnit(_statuses: Map<string, string> | undefined, ctx: any, cellW
 
 function retroLines(width: number, ctx: any, footerData: any): string[] {
 	const out: string[] = [];
-	// Separator rule below the input, with the model right-aligned on it.
-	const mdl = modelString(footerData);
 	const cw = Math.max(1, width - 1); // reserve 1 for the ▏ gutter
-	// Truncate the model label to its column so a long id (e.g. ollama
-	// `glm-5.2:cloud`) can never overflow the rule line — pi-tui throws on
-	// any line wider than the terminal. Measure with visible width, not
-	// .length: the string carries nerd-font glyphs (│, thinking icon).
-	let lead = mdl ? ` ${mdl} ` : "";
-	if (vw(lead) > cw) lead = truncateToWidth(lead, cw, "…");
-	const ruleW = Math.max(0, cw - vw(lead));
-	out.push(`${DIM}${lead}${H.repeat(ruleW)}${RESET}`);
+	provCount = footerData?.getAvailableProviderCount?.() ?? provCount;
 	try {
 		const sm = ctx?.sessionManager;
 		const cwd = formatCwd(sm?.getCwd?.() ?? ctx?.cwd ?? process.cwd());
@@ -310,7 +341,9 @@ function retroLines(width: number, ctx: any, footerData: any): string[] {
 			}
 		}
 	} catch { /* best-effort */ }
-	return out.map((l) => `▏${l}`);
+	// The mode bar replaces the old thin rule and spans the full width, so it
+	// takes no ▏ gutter — every other line does.
+	return [modeBar(width), ...out.map((l) => `▏${l}`)];
 }
 
 // chrome owns the *renderer*; hub owns the *installation* (hub's session_start
@@ -376,6 +409,7 @@ export function installChrome(pi: any, ctx: any): void {
 		// Self-contained retro status line (replaces pi's built-in footer).
 		trackStatus(pi, ctx);
 		installFooter(ctx);
+		renderModelWidget();
 	} catch (err) {
 		console.error("[oilrig-ui] chrome install error:", (err as Error).message);
 	}

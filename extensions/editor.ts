@@ -3,7 +3,7 @@
 // pi keeps exactly one editor slot (ui.setEditorComponent). This takes it once
 // and stacks every foreign factory it observes on top of each other via
 // prototype re-parenting, so every editor's render() lands on the layer below.
-// Selection sits on top as an instance decorator; history and left bar wrap
+// Selection sits on top as an instance decorator; history and unframe wrap
 // the outermost layer.
 //
 // :q shuts down the session. /input shows the layer stack.
@@ -526,15 +526,21 @@ function installHistory(editor: any): void {
 	};
 }
 
-// ── left bar ───────────────────────────────────────────────────────────────
+// ── unframe ────────────────────────────────────────────────────────────────
 
 // The prompt arrives framed twice: pi's base editor draws full-width `─`
 // rules, and a stacked layer may wrap that in a rounded box (`╭─╮`, `│` rails,
-// `╰─╯`). Replace all of it with one fat bar down the left edge — rule lines
-// and box caps dropped (scroll labels like `↑ 2 more` survive), side rails
-// peeled, every remaining line prefixed. The bar paints with the live editor's
-// borderColor so pi's recoloring (bash mode, thinking accents) lands on it.
-const BAR = "▌";
+// `╰─╯`). All of it is dropped — rule lines and box caps (scroll labels like
+// `↑ 2 more` survive), side rails peeled, every remaining line indented by two
+// columns so the geometry is unchanged.
+//
+// The input box carries **no painted glyph** any more. A `▌` down the left
+// edge is inside the terminal's own text: selecting a prompt to copy it drags
+// the black bar along with every line. The mode colour it carried moved to the
+// footer instead — this publishes the live editor's borderColor on globalThis
+// and chrome paints the status line's thick rule with it, outside anything a
+// mouse selection can reach.
+const INDENT = "  ";
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 const plainText = (line: string): string => line.replace(ANSI_RE, "");
@@ -572,7 +578,7 @@ function stripRails(line: string): string | null {
 	return inner;
 }
 
-function installLeftBar(editor: any, theme: any): void {
+function installUnframe(editor: any, theme: any): void {
 	const origRender = editor.render.bind(editor);
 	const fallback = (s: string) =>
 		typeof theme?.borderColor === "function"
@@ -588,7 +594,8 @@ function installLeftBar(editor: any, theme: any): void {
 					: typeof editor.theme?.borderColor === "function"
 						? editor.theme.borderColor
 						: fallback;
-			const prefix = paint(BAR) + " ";
+			(globalThis as any).__oilrigModePaint = paint;
+			const prefix = INDENT;
 			const lines = origRender(Math.max(1, width - 2));
 			const out: string[] = [];
 			for (const line of lines) {
@@ -603,7 +610,7 @@ function installLeftBar(editor: any, theme: any): void {
 			}
 			return out;
 		} catch (err) {
-			console.error("[oilrig-ui] leftBar render error:", (err as Error).message);
+			console.error("[oilrig-ui] unframe render error:", (err as Error).message);
 			return origRender(width);
 		}
 	};
@@ -663,7 +670,7 @@ class InputStack {
 				const ed = new CustomEditor(realTui, editorTheme, keybindings as any);
 				installSelection(ed);
 				installHistory(ed);
-				installLeftBar(ed, theme);
+				installUnframe(ed, theme);
 				installGanttBoard(ed);
 				(ed as any).__ctx = ctx;
 				return ed;
@@ -702,7 +709,7 @@ class InputStack {
 		if (live) {
 			installSelection(live);
 			installHistory(live);
-			installLeftBar(live, theme);
+			installUnframe(live, theme);
 			installGanttBoard(live);
 			this.layers = probes.map((p, i) =>
 				p ? `${p.constructor?.name ?? "?"}${i === liveIdx ? " (live)" : ""}` : "failed");
@@ -714,7 +721,7 @@ class InputStack {
 	describe(): string {
 		const stack = this.layers.length ? this.layers.join(" → ") : "none";
 		return [
-			`layers: ${stack} → selection → history → left bar`,
+			`layers: ${stack} → selection → history → unframe`,
 			`prototype stacking: ${this.stacked ? "on" : "off"}`,
 			"keys: shift+move extend · ctrl+shift+←/→ word · ctrl+shift+a all · ctrl+c copy · ctrl+x cut · shift+del kill to line end",
 			`history: ↑ this session · ctrl+r (or shift+↑ on an empty box) = fuzzy menu over all sessions · ${HISTORY_FILE}`,

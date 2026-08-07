@@ -118,6 +118,7 @@ check(":q triggers shutdown", shutdownCalled === true, String(r?.action));
 const toasts = [];
 const statuses = [];
 const headers = [];
+const widgets = [];
 let footerFactory = null;
 const chromeCtx = {
 	mode: "tui",
@@ -127,7 +128,7 @@ const chromeCtx = {
 		setHeader: (c) => headers.push(c),
 		setFooter: (f) => { footerFactory = f; },
 		setEditorComponent: () => {},
-		setWidget: () => {},
+		setWidget: (k, v) => widgets.push([k, v]),
 		theme: { fg: () => "" },
 		keybindings: {},
 	},
@@ -151,7 +152,16 @@ check("retro footer installed", typeof footerFactory === "function");
 	const comp = footerFactory({}, { fg: () => "" }, { getExtensionStatuses: () => new Map(), getGitBranch: () => null, getAvailableProviderCount: () => 1 });
 	const lines = comp.render(80);
 	check("footer renders a separator + lines", Array.isArray(lines) && lines.length >= 2);
+	const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+	check("footer line 1 is a full-width thick mode bar", plain(lines[0]) === "▀".repeat(80));
+	check("no thin rule left in the footer", !lines.some((l) => plain(l).includes("─")));
+	check("the model label left the footer", !lines.some((l) => plain(l).includes("no-model")));
+	// the mode bar takes the editor's live borderColor when one is published
+	globalThis.__oilrigModePaint = (s) => `\x1b[35m${s}\x1b[0m`;
+	check("mode bar paints with the editor's borderColor", comp.render(80)[0].startsWith("\x1b[35m"));
+	delete globalThis.__oilrigModePaint;
 }
+check("model label sits above the input", widgets.some(([k, v]) => k === "model" && String(v).includes("no-model")));
 
 // ── editor stack ──
 let editorFactoryCalled = false;
@@ -189,7 +199,11 @@ catch { threw = true; }
 check("shift+select extends without throwing", !threw && handled === true);
 check("shift+select requests a render", rendered > 0);
 check("selection is highlighted", ed.render(80).join("\n").includes("\x1b[7m"));
-check("left bar prefixes every line", ed.render(80).every((l) => l.startsWith("▌")));
+// The input box carries no painted glyph: a ▌ down the left edge is inside the
+// terminal's own text and gets dragged along by any copy of a prompt.
+check("input box has no left bar to copy", ed.render(80).every((l) => !l.includes("▌")));
+check("input lines keep the two-column indent", ed.render(80).every((l) => l.startsWith("  ")));
+check("editor publishes its mode paint for the footer bar", typeof globalThis.__oilrigModePaint === "function");
 let cutThrew = false;
 try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
 check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");
