@@ -285,7 +285,10 @@ const RIGHT = [0x08, 0x10, 0x20, 0x80];
 
 // Endcaps, pointing inward: the bar is a segment, and a segment reads as one
 // thing when both ends are terminated. Big triangles fill the full cell height
-// so they sit dead center — no alignment mismatch with the inner braille line.
+// so they sit dead center. The inner line uses ━ (heavy horizontal, U+2501) at
+// rest — same cell zone as the triangles — and switches to braille during
+// animation (braille has sub-cell resolution for the traveling wave; the
+// vertical mismatch doesn't matter when the eye tracks motion).
 const CAP_L = "\u25B6"; // ▶
 const CAP_R = "\u25C0"; // ◀
 
@@ -304,10 +307,13 @@ function dotRow(x: number, head: number): number {
 	return Math.round(1.5 - 1.5 * s);
 }
 
-// The line between the caps. The wave lives here, so it enters and leaves
-// behind them rather than overwriting them.
+// The line between the caps. At rest it's a single centered hard rule (━) that
+// aligns with the triangles. During animation it switches to braille, the only
+// glyph family with sub-cell vertical resolution — the wave still sits inside
+// one row and never spills. The vertical mismatch between braille and the caps
+// is invisible when the eye is tracking the traveling wave.
 function lineGlyphs(width: number): string {
-	if (!busy) return String.fromCharCode(BRAILLE | LEFT[BASE_ROW] | RIGHT[BASE_ROW]).repeat(width);
+	if (!busy) return "\u2501".repeat(width);
 	const span = width * 2;
 	// The packet enters from off-screen left and leaves off-screen right, then
 	// the line is flat for GAP before the next one. Phase is normalised here
