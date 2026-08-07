@@ -354,13 +354,12 @@ function dotRow(x: number, head: number): number {
 	return Math.round(1.5 - 1.5 * s);
 }
 
-// The line between the caps. At rest it's a single centered hard rule (━) that
-// aligns with the triangles. During animation it switches to braille, the only
-// glyph family with sub-cell vertical resolution — the wave still sits inside
-// one row and never spills. The vertical mismatch between braille and the caps
-// is invisible when the eye is tracking the traveling wave.
+// The line between the caps. At rest it's a single centered dot (·) that
+// aligns with the triangles and reads as a light connecting segment — no
+// thick rule to leak into a text copy. During animation it switches to
+// braille, the only glyph family with sub-cell vertical resolution.
 function lineGlyphs(width: number): string {
-	if (!busy) return "\u2501".repeat(width);
+	if (!busy) return "\u00B7".repeat(width);
 	const span = width * 2;
 	// The packet enters from off-screen left and leaves off-screen right, then
 	// the line is flat for GAP before the next one. Phase is normalised here

@@ -153,7 +153,7 @@ check("retro footer installed", typeof footerFactory === "function");
 	const lines = comp.render(80);
 	check("footer renders a separator + lines", Array.isArray(lines) && lines.length >= 2);
 	const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
-	check("footer line 1 is the full-width capped mode line", plain(lines[0]) === `▶${"━".repeat(78)}◀`);
+	check("footer line 1 is the full-width capped mode line", plain(lines[0]) === `▶${"·".repeat(78)}◀`);
 	check("no thin rule left in the footer", !lines.some((l) => plain(l).includes("─")));
 	check("the model label left the footer", !lines.some((l) => plain(l).includes("no-model")));
 	// the ▏ rail down the left of the status block is gone
@@ -233,7 +233,7 @@ check("the model label is a block in the stack, not its own widget",
 	const chrome = await import(pathToFileURL(join(SCRATCH, "extensions/chrome.ts")).href);
 	const { __barGlyphsForTest: glyphs, setBusy, setMeter, tickMeter, __lastSample } = chrome;
 	const isBraille = (s) => [...s].every((c) => c.codePointAt(0) >= 0x2800 && c.codePointAt(0) <= 0x28ff);
-	const FLAT = "\u2501"; // ━ — heavy horizontal, dead center with ▶◀
+	const FLAT = "\u00B7"; // · — middle dot, dead center with ▶◀
 const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wave tests
 	const INNER = 78;
 	const line = (s) => s.slice(1, -1);
@@ -241,8 +241,8 @@ const FLAT_BRAILLE = "\u2824"; // ⠤ — braille at BASE_ROW=2, used by the wav
 	const idle = glyphs(80, false, 0);
 	check("idle bar has right-pointing cap on the left", idle[0] === "▶");
 	check("idle bar has left-pointing cap on the right", idle[79] === "◀");
-	check("the line between caps is a centered hard rule", line(idle) === FLAT.repeat(INNER));
-	check("idle line is a horizontal rule, not braille", line(idle).split("").every(c => c === "━"));
+	check("the line between caps is a centered dot", line(idle) === FLAT.repeat(INNER));
+	check("idle line is middle dots, not braille", line(idle).split("").every(c => c === "·"));
 	check("the caps are one cell each, so the bar fits", idle.length === 80 && [...idle].length === 80);
 	check("a 2-cell bar drops the caps", glyphs(2, false, 0) === FLAT.repeat(2));
 
