@@ -194,7 +194,9 @@ function installSelection(editor: any): void {
 			return false;
 		}
 
-		// ctrl+x = cut
+		// ctrl+x = cut. With a selection it cuts that; with none it cuts the
+		// whole prompt — the box is a paragraph, and "take what I typed out of
+		// here and put it on the clipboard" wants no select-all first.
 		if (matchesKey(data, "ctrl+x") || matchesKey(data, "ctrl+X")) {
 			if (sel.active) {
 				const text = extractSelection(this, sel.anchor, sel.head);
@@ -205,7 +207,17 @@ function installSelection(editor: any): void {
 				this.tui?.requestRender?.();
 				return true;
 			}
-			return false;
+			const whole = this.getText();
+			if (!whole) return false; // empty box: let the key fall through
+			copyToClipboard(whole);
+			const state = this.state;
+			state.lines = [""];
+			state.cursorLine = 0;
+			state.cursorCol = 0;
+			this.cancelAutocomplete?.();
+			this.onChange?.(this.getText());
+			this.tui?.requestRender?.();
+			return true;
 		}
 
 		// escape = drop selection
@@ -723,7 +735,7 @@ class InputStack {
 		return [
 			`layers: ${stack} → selection → history → unframe`,
 			`prototype stacking: ${this.stacked ? "on" : "off"}`,
-			"keys: shift+move extend · ctrl+shift+←/→ word · ctrl+shift+a all · ctrl+c copy · ctrl+x cut · shift+del kill to line end",
+			"keys: shift+move extend · ctrl+shift+←/→ word · ctrl+shift+a all · ctrl+c copy · ctrl+x cut selection, or the whole prompt when nothing is selected · shift+del kill to line end",
 			`history: ↑ this session · ctrl+r (or shift+↑ on an empty box) = fuzzy menu over all sessions · ${HISTORY_FILE}`,
 			...this.notes.map((n) => `note: ${n}`),
 		].join("\n");

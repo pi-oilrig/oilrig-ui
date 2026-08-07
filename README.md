@@ -41,7 +41,7 @@ session/process data in the status bar.
 | `ctrl+shift+←→` | Extend selection by word |
 | `ctrl+shift+a` | Select all |
 | `ctrl+c` | Copy (keeps selection) |
-| `ctrl+x` | Cut |
+| `ctrl+x` | Cut the selection — or, with no selection, the **whole prompt** (clipboard + empty box) |
 | `shift+del` | Kill to end of line |
 | `escape` | Drop selection |
 | `↑` (empty) | Previous prompts this session |

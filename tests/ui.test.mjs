@@ -208,6 +208,16 @@ let cutThrew = false;
 try { ed.onExtensionShortcut("ctrl+x"); } catch { cutThrew = true; }
 check("cut removes selection + fires onChange", !cutThrew && ed.getText() === " world" && lastChange === " world");
 
+// ctrl+x with nothing selected cuts the whole prompt — no select-all first.
+ed.setText("line one\nline two");
+ed.state.cursorLine = 1;
+ed.state.cursorCol = 4;
+lastChange = null;
+const wholeCut = ed.onExtensionShortcut("ctrl+x");
+check("ctrl+x with no selection empties the box", wholeCut === true && ed.getText() === "");
+check("whole-prompt cut resets the cursor + fires onChange", ed.state.cursorLine === 0 && ed.state.cursorCol === 0 && lastChange === "");
+check("ctrl+x on an empty box falls through", ed.onExtensionShortcut("ctrl+x") === false);
+
 // ── history menu (regression: fuzzyFilter's args were swapped, so typing never
 // filtered; and the old picker took over ui.custom, so the input box vanished.
 // It is now pi's own autocomplete menu — editor keeps the slot) ──
